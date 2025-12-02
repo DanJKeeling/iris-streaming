@@ -345,10 +345,7 @@ def create_iris_stream(
         
     Example:
         ```python
-        config = IRISConfig.from_databricks_secrets(
-            scope="iris",
-            topics=["bmrs/FREQ", "bmrs/INDDEM"],
-        )
+        config = IRISConfig.from_databricks_secrets(scope="iris")
         source, trigger_df = create_iris_stream(spark, config)
         
         # Process with foreachBatch
@@ -402,22 +399,14 @@ class IRISStreamProcessor:
     
     Example:
         ```python
-        config = IRISConfig.from_databricks_secrets(
-            scope="iris",
-            topics=["bmrs/FREQ"],
-        )
+        config = IRISConfig.from_databricks_secrets(scope="iris")
         
         processor = IRISStreamProcessor(spark, config=config)
         
         # Define processing function
         def handle_messages(df: DataFrame, batch_id: int):
             # Parse JSON body and process
-            parsed = df.selectExpr(
-                "topic",
-                "from_json(body, 'struct<...>') as data",
-                "received_at",
-            )
-            parsed.show()
+            df.select("body", "received_at").show()
         
         # Start processing
         processor.start(handle_messages)

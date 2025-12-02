@@ -158,20 +158,17 @@ class IRISMessageHandler(MessagingHandler):
         """Called when connection is established."""
         logger.info("Connected to IRIS successfully")
         
-        # Create receivers for each topic
-        for topic in self.config.topics:
-            # Create a durable subscription
-            subscription_address = f"{topic}::{self.config.subscription_name}"
-            
-            receiver = event.container.create_receiver(
-                self.connection,
-                topic,
-                name=f"{self.config.subscription_name}-{topic.replace('/', '-')}",
-                options=Selector(f"TRUE") if PROTON_AVAILABLE else None,
-            )
-            receiver.flow(self.config.prefetch_count)
-            self.receivers[topic] = receiver
-            logger.info(f"Subscribed to topic: {topic}")
+        # Create receiver for the IRIS queue
+        queue = self.config.queue
+        receiver = event.container.create_receiver(
+            self.connection,
+            queue,
+            name=f"{self.config.subscription_name}-{queue.replace('.', '-')}",
+            options=Selector(f"TRUE") if PROTON_AVAILABLE else None,
+        )
+        receiver.flow(self.config.prefetch_count)
+        self.receivers[queue] = receiver
+        logger.info(f"Subscribed to queue: {queue}")
         
         self._connected.set()
     

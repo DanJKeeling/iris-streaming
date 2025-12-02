@@ -17,10 +17,10 @@ Usage:
 """
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col
+from pyspark.sql.functions import from_json, col, get_json_object
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
-from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
+from iris_connector import IRISConfig, IRISStreamProcessor
 
 
 # Get existing Spark session (provided by Databricks) or create one for local testing
@@ -32,11 +32,7 @@ config = IRISConfig.from_databricks_secrets(
     scope="iris",
     client_id_key="iris-client-id",
     client_secret_key="iris-client-secret",
-    topics=[
-        IRISTopics.FREQ,           # System Frequency
-        IRISTopics.INDDEM,         # Indicated Demand
-        IRISTopics.INDGEN,         # Indicated Generation
-    ],
+    # Default queue: iris.5c9f752d-795a-4986-97cc-8a49f5380c02
     use_tls=True,
     max_batch_size=500,
     # Use DBFS for checkpoint persistence across cluster restarts
@@ -51,25 +47,11 @@ def process_messages(df, batch_id):
     print(f"Received {df.count()} messages")
     
     # Show raw messages
-    df.select("topic", "body", "received_at").show(truncate=50)
+    df.select("body", "received_at").show(truncate=80)
     
-    # Parse FREQ (System Frequency) messages as an example
-    freq_schema = StructType([
-        StructField("settlementDate", StringType()),
-        StructField("settlementPeriod", StringType()),
-        StructField("frequency", DoubleType()),
-        StructField("measurementTimestamp", StringType()),
-    ])
-    
-    freq_messages = (
-        df.filter(col("topic") == IRISTopics.FREQ)
-        .withColumn("parsed", from_json(col("body"), freq_schema))
-        .select("topic", "parsed.*", "received_at")
-    )
-    
-    if freq_messages.count() > 0:
-        print("\nParsed Frequency Data:")
-        freq_messages.show()
+    # Messages contain different data types - you can filter by message type
+    # Example: Parse frequency data if present in the message body
+    # The actual schema depends on the IRIS message format
 
 
 # Create the processor
@@ -80,7 +62,7 @@ processor = IRISStreamProcessor(
 )
 
 print("Starting IRIS streaming...")
-print(f"Subscribing to topics: {config.topics}")
+print(f"Connecting to queue: {config.queue}")
 
 # Start processing with a 2-second trigger interval
 query = processor.start(
@@ -92,4 +74,3 @@ query = processor.start(
 #   processor.stop()
 # 
 # Or let it run and monitor via Spark UI
-

@@ -21,13 +21,13 @@ Usage in Databricks notebook:
 import json
 from datetime import datetime
 
-from iris_connector import IRISConfig, IRISAMQPClient, IRISTopics
+from iris_connector import IRISConfig, IRISAMQPClient
 
 
 def format_message(msg):
     """Format an IRIS message for display."""
     print(f"\n{'─'*60}")
-    print(f"📨 Topic: {msg.topic}")
+    print(f"📨 Queue: {msg.topic}")
     print(f"⏰ Received: {msg.timestamp or 'N/A'}")
     print(f"🆔 Message ID: {msg.message_id or 'N/A'}")
     
@@ -68,16 +68,14 @@ def test_iris_connection(num_messages: int = 10) -> IRISAMQPClient:
         scope="iris",
         client_id_key="iris-client-id",
         client_secret_key="iris-client-secret",
-        topics=[
-            IRISTopics.FREQ,           # System Frequency (updates every 2 seconds)
-        ],
+        # Default queue: iris.5c9f752d-795a-4986-97cc-8a49f5380c02
         use_tls=True,
         prefetch_count=10,
     )
     
     print("🔌 IRIS Simple Client")
     print(f"📡 Connecting to: {config.host}:{config.port}")
-    print(f"📋 Topics: {config.topics}")
+    print(f"📋 Queue: {config.queue}")
     print()
     
     # Connect to IRIS
@@ -128,4 +126,3 @@ def test_iris_connection(num_messages: int = 10) -> IRISAMQPClient:
 # When run in a notebook, this provides a quick connectivity test
 # Run: client = test_iris_connection()
 # Stop: client.stop()
-

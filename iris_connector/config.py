@@ -44,15 +44,15 @@ class IRISConfig:
     Configuration for connecting to Elexon's IRIS AMQP service.
     
     IRIS (Insights Real-time Information Service) provides near real-time
-    data via AMQP 1.0 protocol.
+    data via AMQP 1.0 protocol on Azure Service Bus.
     
     Attributes:
-        host: IRIS AMQP server hostname
-        port: AMQP port (default 5671 for AMQPS, 5672 for AMQP)
+        host: IRIS AMQP server hostname (Azure Service Bus)
+        port: AMQP port (default 5671 for AMQPS)
+        queue: The IRIS queue/entity path to subscribe to
         client_id: OAuth Client ID for IRIS authentication
         client_secret: OAuth Client Secret for IRIS authentication
         subscription_name: Name for the durable subscription
-        topics: List of topics to subscribe to
         use_tls: Whether to use TLS/SSL encryption
         connection_timeout: Connection timeout in seconds
         prefetch_count: Number of messages to prefetch
@@ -60,23 +60,15 @@ class IRISConfig:
         checkpoint_location: Spark checkpoint directory
     """
     
-    # Connection settings
-    host: str = "bmrs-iris.elexon.co.uk"
+    # Connection settings - Azure Service Bus endpoint
+    host: str = "elexon-insights-iris.servicebus.windows.net"
     port: int = 5671
+    queue: str = "iris.5c9f752d-795a-4986-97cc-8a49f5380c02"
     client_id: str = ""
     client_secret: str = ""
     
     # Subscription settings
     subscription_name: str = "pyspark-iris-connector"
-    topics: list[str] = field(default_factory=lambda: [
-        "bmrs/BOALF",  # Bid Offer Acceptance Level Flagged
-        "bmrs/PN",     # Physical Notification
-        "bmrs/FREQ",   # System Frequency
-        "bmrs/INDDEM", # Indicated Demand
-        "bmrs/INDGEN", # Indicated Generation
-        "bmrs/MID",    # Market Index Data
-        "bmrs/TEMP",   # Temperature Data
-    ])
     
     # Security settings
     use_tls: bool = True
@@ -98,27 +90,24 @@ class IRISConfig:
         Create configuration from environment variables.
         
         Environment variables:
-            IRIS_HOST: AMQP server hostname
+            IRIS_HOST: AMQP server hostname (Azure Service Bus)
             IRIS_PORT: AMQP port
+            IRIS_QUEUE: IRIS queue/entity path
             IRIS_CLIENT_ID: OAuth Client ID
             IRIS_CLIENT_SECRET: OAuth Client Secret
             IRIS_SUBSCRIPTION_NAME: Durable subscription name
-            IRIS_TOPICS: Comma-separated list of topics
             IRIS_USE_TLS: Whether to use TLS (true/false)
             IRIS_PREFETCH_COUNT: Message prefetch count
             IRIS_MAX_BATCH_SIZE: Max messages per batch
             IRIS_CHECKPOINT_LOCATION: Spark checkpoint directory
         """
-        topics_str = os.getenv("IRIS_TOPICS", "")
-        topics = [t.strip() for t in topics_str.split(",") if t.strip()] if topics_str else None
-        
         return cls(
             host=os.getenv("IRIS_HOST", cls.host),
             port=int(os.getenv("IRIS_PORT", cls.port)),
+            queue=os.getenv("IRIS_QUEUE", cls.queue),
             client_id=os.getenv("IRIS_CLIENT_ID", ""),
             client_secret=os.getenv("IRIS_CLIENT_SECRET", ""),
             subscription_name=os.getenv("IRIS_SUBSCRIPTION_NAME", cls.subscription_name),
-            topics=topics if topics else cls.topics,
             use_tls=os.getenv("IRIS_USE_TLS", "true").lower() == "true",
             prefetch_count=int(os.getenv("IRIS_PREFETCH_COUNT", cls.prefetch_count)),
             max_batch_size=int(os.getenv("IRIS_MAX_BATCH_SIZE", cls.max_batch_size)),
@@ -131,7 +120,6 @@ class IRISConfig:
         scope: str = "iris",
         client_id_key: str = "iris-client-id",
         client_secret_key: str = "iris-client-secret",
-        topics: Optional[list[str]] = None,
         **kwargs,
     ) -> "IRISConfig":
         """
@@ -144,25 +132,21 @@ class IRISConfig:
             scope: Databricks secret scope name (default: "iris")
             client_id_key: Key name for the Client ID secret (default: "iris-client-id")
             client_secret_key: Key name for the Client Secret (default: "iris-client-secret")
-            topics: List of IRIS topics to subscribe to
-            **kwargs: Additional IRISConfig parameters (host, port, use_tls, etc.)
+            **kwargs: Additional IRISConfig parameters (host, port, queue, use_tls, etc.)
         
         Returns:
             IRISConfig instance with credentials from Databricks secrets
         
         Example:
             ```python
-            # Basic usage with default secret names
-            config = IRISConfig.from_databricks_secrets(
-                topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
-            )
+            # Basic usage with default secret names and queue
+            config = IRISConfig.from_databricks_secrets()
             
             # Custom secret scope and keys
             config = IRISConfig.from_databricks_secrets(
                 scope="my-scope",
                 client_id_key="elexon-client-id",
                 client_secret_key="elexon-client-secret",
-                topics=[IRISTopics.FREQ],
             )
             ```
         
@@ -195,7 +179,6 @@ class IRISConfig:
         return cls(
             client_id=client_id,
             client_secret=client_secret,
-            topics=topics if topics else cls.topics,
             **kwargs,
         )
     
@@ -212,66 +195,9 @@ class IRISConfig:
         """Validate configuration."""
         if not self.host:
             raise ValueError("IRIS host is required")
-        if not self.topics:
-            raise ValueError("At least one topic is required")
+        if not self.queue:
+            raise ValueError("IRIS queue path is required")
         if self.prefetch_count < 1:
             raise ValueError("Prefetch count must be positive")
         if self.max_batch_size < 1:
             raise ValueError("Max batch size must be positive")
-
-
-# Common IRIS topic definitions for reference
-class IRISTopics:
-    """
-    Standard IRIS BMRS topics available for subscription.
-    
-    These represent various data feeds from the Balancing Mechanism
-    Reporting Service (BMRS).
-    """
-    
-    # Real-time operational data
-    BOALF = "bmrs/BOALF"          # Bid Offer Acceptance Level Flagged
-    PN = "bmrs/PN"                # Physical Notification
-    QPN = "bmrs/QPN"              # Quiescent Physical Notification
-    MEL = "bmrs/MEL"              # Maximum Export Limit
-    MIL = "bmrs/MIL"              # Maximum Import Limit
-    
-    # System data
-    FREQ = "bmrs/FREQ"            # System Frequency
-    INDDEM = "bmrs/INDDEM"        # Indicated Demand
-    INDGEN = "bmrs/INDGEN"        # Indicated Generation
-    INDO = "bmrs/INDO"            # Initial Demand Outturn
-    ITSDO = "bmrs/ITSDO"          # Initial Transmission System Demand Outturn
-    
-    # Market data
-    MID = "bmrs/MID"              # Market Index Data
-    IMBALNGC = "bmrs/IMBALNGC"    # Imbalance NGC
-    DISBSAD = "bmrs/DISBSAD"      # Disaggregated BSAD
-    NETBSAD = "bmrs/NETBSAD"      # Net BSAD
-    
-    # Generation and demand
-    B1610 = "bmrs/B1610"          # Actual Generation per Type
-    B1620 = "bmrs/B1620"          # Actual Aggregated Generation
-    B1630 = "bmrs/B1630"          # Actual Or Estimated Wind and Solar
-    B0610 = "bmrs/B0610"          # Actual Total Load
-    
-    # Forecast data
-    B0620 = "bmrs/B0620"          # Day-Ahead Total Load Forecast
-    B0630 = "bmrs/B0630"          # Week-Ahead Total Load Forecast
-    B1440 = "bmrs/B1440"          # Generation Forecasts for Wind and Solar
-    
-    # Temperature
-    TEMP = "bmrs/TEMP"            # Temperature Data
-    
-    # Balancing costs
-    SYSDEM = "bmrs/SYSDEM"        # System Demand
-    SYSWARN = "bmrs/SYSWARN"      # System Warnings
-    
-    @classmethod
-    def all_topics(cls) -> list[str]:
-        """Return all available topics."""
-        return [
-            value for name, value in vars(cls).items()
-            if not name.startswith("_") and isinstance(value, str)
-        ]
-

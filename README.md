@@ -80,7 +80,7 @@ databricks secrets put --scope iris --key iris-client-secret
 ### 1. Basic Streaming Example (Databricks Notebook)
 
 ```python
-from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
+from iris_connector import IRISConfig, IRISStreamProcessor
 
 # spark is already available in Databricks notebooks
 
@@ -89,8 +89,7 @@ config = IRISConfig.from_databricks_secrets(
     scope="iris",
     client_id_key="iris-client-id",
     client_secret_key="iris-client-secret",
-    topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
-    # Use DBFS for checkpoint persistence
+    # Uses default queue: iris.5c9f752d-795a-4986-97cc-8a49f5380c02
     checkpoint_location="/dbfs/checkpoints/iris/stream",
 )
 
@@ -109,14 +108,13 @@ query = processor.start(process_messages, trigger_interval="2 seconds")
 ### 2. Custom Secret Scope and Keys
 
 ```python
-from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
+from iris_connector import IRISConfig, IRISStreamProcessor
 
 # Use custom secret scope and key names
 config = IRISConfig.from_databricks_secrets(
     scope="my-custom-scope",
     client_id_key="elexon-client-id",
     client_secret_key="elexon-client-secret",
-    topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
     checkpoint_location="/dbfs/checkpoints/iris/custom",
 )
 
@@ -126,13 +124,10 @@ processor = IRISStreamProcessor(spark, config)
 ### 3. Test Connectivity (Direct AMQP Client)
 
 ```python
-from iris_connector import IRISAMQPClient, IRISConfig, IRISTopics
+from iris_connector import IRISAMQPClient, IRISConfig
 
 # Credentials retrieved from Databricks secrets
-config = IRISConfig.from_databricks_secrets(
-    scope="iris",
-    topics=[IRISTopics.FREQ],
-)
+config = IRISConfig.from_databricks_secrets(scope="iris")
 
 # Connect and receive some messages
 client = IRISAMQPClient(config)
@@ -141,28 +136,11 @@ client.start()
 # Get a batch of messages
 messages = client.get_batch(max_size=10, timeout=10.0)
 for msg in messages:
-    print(f"Topic: {msg.topic}, Body: {msg.body}")
+    print(f"Body: {msg.body}")
 
 # Remember to stop when done
 client.stop()
 ```
-
-## Available Topics
-
-The connector supports all IRIS BMRS topics. Common ones include:
-
-| Topic | Description | Update Frequency |
-|-------|-------------|------------------|
-| `bmrs/FREQ` | System Frequency | ~2 seconds |
-| `bmrs/INDDEM` | Indicated Demand | Per settlement period |
-| `bmrs/INDGEN` | Indicated Generation | Per settlement period |
-| `bmrs/PN` | Physical Notification | As submitted |
-| `bmrs/BOALF` | Bid Offer Acceptance Levels | As issued |
-| `bmrs/MID` | Market Index Data | Per settlement period |
-| `bmrs/B1610` | Actual Generation per Type | Per settlement period |
-| `bmrs/B1630` | Wind and Solar Generation | Per settlement period |
-
-See `IRISTopics` class for the complete list.
 
 ## Configuration Reference
 
@@ -170,17 +148,17 @@ See `IRISTopics` class for the complete list.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `host` | str | `bmrs-iris.elexon.co.uk` | IRIS server hostname |
+| `host` | str | `elexon-insights-iris.servicebus.windows.net` | Azure Service Bus hostname |
 | `port` | int | `5671` | AMQP port (5671 for TLS) |
+| `queue` | str | `iris.5c9f752d-795a-4986-97cc-8a49f5380c02` | IRIS queue path |
 | `client_id` | str | `""` | OAuth Client ID |
 | `client_secret` | str | `""` | OAuth Client Secret |
-| `topics` | list | Various | Topics to subscribe to |
 | `use_tls` | bool | `True` | Enable TLS encryption |
 | `verify_ssl` | bool | `True` | Verify SSL certificates |
 | `prefetch_count` | int | `100` | Messages to prefetch |
 | `max_batch_size` | int | `1000` | Max messages per batch |
 | `connection_timeout` | int | `30` | Connection timeout (seconds) |
-| `checkpoint_location` | str | `/tmp/iris_checkpoint` | Spark checkpoint dir |
+| `checkpoint_location` | str | `/dbfs/checkpoints/iris` | Spark checkpoint dir |
 
 ### Databricks Secrets (Recommended)
 
@@ -191,7 +169,6 @@ config = IRISConfig.from_databricks_secrets(
     scope="iris",                        # Databricks secret scope name
     client_id_key="iris-client-id",      # Key for Client ID secret
     client_secret_key="iris-client-secret",  # Key for Client Secret
-    topics=[...],                        # Topics to subscribe to
     # Additional options can be passed as keyword arguments
     max_batch_size=1000,
     prefetch_count=200,
@@ -210,11 +187,11 @@ For non-Databricks environments, you can use environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `IRIS_HOST` | AMQP server hostname |
+| `IRIS_HOST` | Azure Service Bus hostname |
 | `IRIS_PORT` | AMQP port |
+| `IRIS_QUEUE` | IRIS queue path |
 | `IRIS_CLIENT_ID` | OAuth Client ID |
 | `IRIS_CLIENT_SECRET` | OAuth Client Secret |
-| `IRIS_TOPICS` | Comma-separated list of topics |
 | `IRIS_USE_TLS` | Enable TLS (true/false) |
 | `IRIS_PREFETCH_COUNT` | Message prefetch count |
 | `IRIS_MAX_BATCH_SIZE` | Max messages per batch |
@@ -226,7 +203,7 @@ Messages are delivered as DataFrames with the following schema:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `topic` | string | The AMQP topic/address |
+| `topic` | string | The AMQP queue address |
 | `body` | string | JSON-encoded message body |
 | `message_id` | string | Unique message identifier |
 | `correlation_id` | string | Correlation ID |
@@ -237,32 +214,35 @@ Messages are delivered as DataFrames with the following schema:
 ### Parsing Message Bodies
 
 ```python
-from pyspark.sql.functions import from_json, col
+from pyspark.sql.functions import from_json, col, get_json_object
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
-# Define schema for FREQ messages
-freq_schema = StructType([
-    StructField("settlementDate", StringType()),
-    StructField("settlementPeriod", StringType()),
-    StructField("frequency", DoubleType()),
-    StructField("measurementTimestamp", StringType()),
+# Extract specific fields from JSON body
+df_with_fields = df.select(
+    get_json_object(col("body"), "$.messageType").alias("message_type"),
+    col("body"),
+    col("received_at"),
+)
+
+# Or define a schema and parse the full body
+message_schema = StructType([
+    StructField("messageType", StringType()),
+    StructField("data", StringType()),
 ])
 
-# Parse JSON body
 parsed_df = (
-    df.filter(col("topic") == "bmrs/FREQ")
-    .withColumn("data", from_json(col("body"), freq_schema))
-    .select("topic", "data.*", "received_at")
+    df.withColumn("parsed", from_json(col("body"), message_schema))
+    .select("parsed.*", "received_at")
 )
 ```
 
 ## Architecture
 
 ```
-┌─────────────────┐     AMQP 1.0      ┌──────────────────┐
-│   Elexon IRIS   │ ◄───────────────► │  IRISAMQPClient  │
-│  (AMQP Server)  │    TLS/SSL        │  (Proton-based)  │
-└─────────────────┘                   └────────┬─────────┘
+┌─────────────────────────────┐   AMQP 1.0   ┌──────────────────┐
+│  Azure Service Bus (IRIS)   │ ◄──────────► │  IRISAMQPClient  │
+│  elexon-insights-iris...    │   TLS/SSL    │  (Proton-based)  │
+└─────────────────────────────┘              └────────┬─────────┘
                                                │
                                                ▼
                                     ┌──────────────────────┐
@@ -325,7 +305,7 @@ Adjust `max_batch_size` based on your processing capacity:
 
 ### Prefetch Count
 The `prefetch_count` controls how many messages the AMQP client requests in advance:
-- Higher values (200-500): Better throughput for high-volume topics
+- Higher values (200-500): Better throughput for high message rates
 - Lower values (10-50): Better for low-volume or large messages
 
 ### Spark Configuration

@@ -144,11 +144,11 @@ class IRISMessageHandler(MessagingHandler):
         # Build connection URL
         url = self.config.amqp_url
         
-        # Create connection with authentication
+        # Create connection with authentication (Client ID and Secret)
         self.connection = event.container.connect(
             url,
-            user=self.config.username,
-            password=self.config.password,
+            user=self.config.client_id,
+            password=self.config.client_secret,
             ssl_domain=ssl_domain,
             heartbeat=self.config.idle_timeout,
         )
@@ -244,9 +244,8 @@ class IRISAMQPClient:
     
     Example:
         ```python
-        config = IRISConfig(
-            username="your_api_key",
-            password="your_api_secret",
+        config = IRISConfig.from_databricks_secrets(
+            scope="iris",
             topics=["bmrs/FREQ", "bmrs/INDDEM"],
         )
         

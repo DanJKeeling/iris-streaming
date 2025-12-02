@@ -345,13 +345,11 @@ def create_iris_stream(
         
     Example:
         ```python
-        source, trigger_df = create_iris_stream(
-            spark,
-            host="bmrs-iris.elexon.co.uk",
-            username="your_key",
-            password="your_secret",
+        config = IRISConfig.from_databricks_secrets(
+            scope="iris",
             topics=["bmrs/FREQ", "bmrs/INDDEM"],
         )
+        source, trigger_df = create_iris_stream(spark, config)
         
         # Process with foreachBatch
         def process(batch_df, batch_id):
@@ -362,7 +360,7 @@ def create_iris_stream(
         query = (
             trigger_df.writeStream
             .foreachBatch(process)
-            .option("checkpointLocation", "/tmp/checkpoint")
+            .option("checkpointLocation", "/dbfs/checkpoints/iris")
             .start()
         )
         
@@ -404,14 +402,12 @@ class IRISStreamProcessor:
     
     Example:
         ```python
-        processor = IRISStreamProcessor(
-            spark,
-            config=IRISConfig(
-                username="your_key",
-                password="your_secret",
-                topics=["bmrs/FREQ"],
-            ),
+        config = IRISConfig.from_databricks_secrets(
+            scope="iris",
+            topics=["bmrs/FREQ"],
         )
+        
+        processor = IRISStreamProcessor(spark, config=config)
         
         # Define processing function
         def handle_messages(df: DataFrame, batch_id: int):

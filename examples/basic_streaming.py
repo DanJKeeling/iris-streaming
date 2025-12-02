@@ -8,8 +8,8 @@ Databricks Setup:
     1. Install cluster library: python-qpid-proton (via PyPI)
     2. Set up secrets (run once via Databricks CLI):
         databricks secrets create-scope --scope iris
-        databricks secrets put --scope iris --key iris-username
-        databricks secrets put --scope iris --key iris-password
+        databricks secrets put --scope iris --key iris-client-id
+        databricks secrets put --scope iris --key iris-client-secret
 
 Usage:
     Copy this code into a Databricks notebook and run cell by cell,
@@ -27,11 +27,11 @@ from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
 spark = SparkSession.builder.getOrCreate()
 
 # Configure IRIS connection with credentials from Databricks secrets
-# Secrets are retrieved from scope "iris" with keys "iris-username" and "iris-password"
+# Secrets are retrieved from scope "iris" with keys "iris-client-id" and "iris-client-secret"
 config = IRISConfig.from_databricks_secrets(
     scope="iris",
-    username_key="iris-username",
-    password_key="iris-password",
+    client_id_key="iris-client-id",
+    client_secret_key="iris-client-secret",
     topics=[
         IRISTopics.FREQ,           # System Frequency
         IRISTopics.INDDEM,         # Indicated Demand

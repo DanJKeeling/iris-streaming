@@ -49,8 +49,8 @@ class IRISConfig:
     Attributes:
         host: IRIS AMQP server hostname
         port: AMQP port (default 5671 for AMQPS, 5672 for AMQP)
-        username: Authentication username (API key or service account)
-        password: Authentication password/secret
+        client_id: OAuth Client ID for IRIS authentication
+        client_secret: OAuth Client Secret for IRIS authentication
         subscription_name: Name for the durable subscription
         topics: List of topics to subscribe to
         use_tls: Whether to use TLS/SSL encryption
@@ -63,8 +63,8 @@ class IRISConfig:
     # Connection settings
     host: str = "bmrs-iris.elexon.co.uk"
     port: int = 5671
-    username: str = ""
-    password: str = ""
+    client_id: str = ""
+    client_secret: str = ""
     
     # Subscription settings
     subscription_name: str = "pyspark-iris-connector"
@@ -100,8 +100,8 @@ class IRISConfig:
         Environment variables:
             IRIS_HOST: AMQP server hostname
             IRIS_PORT: AMQP port
-            IRIS_USERNAME: Authentication username
-            IRIS_PASSWORD: Authentication password
+            IRIS_CLIENT_ID: OAuth Client ID
+            IRIS_CLIENT_SECRET: OAuth Client Secret
             IRIS_SUBSCRIPTION_NAME: Durable subscription name
             IRIS_TOPICS: Comma-separated list of topics
             IRIS_USE_TLS: Whether to use TLS (true/false)
@@ -115,8 +115,8 @@ class IRISConfig:
         return cls(
             host=os.getenv("IRIS_HOST", cls.host),
             port=int(os.getenv("IRIS_PORT", cls.port)),
-            username=os.getenv("IRIS_USERNAME", ""),
-            password=os.getenv("IRIS_PASSWORD", ""),
+            client_id=os.getenv("IRIS_CLIENT_ID", ""),
+            client_secret=os.getenv("IRIS_CLIENT_SECRET", ""),
             subscription_name=os.getenv("IRIS_SUBSCRIPTION_NAME", cls.subscription_name),
             topics=topics if topics else cls.topics,
             use_tls=os.getenv("IRIS_USE_TLS", "true").lower() == "true",
@@ -129,8 +129,8 @@ class IRISConfig:
     def from_databricks_secrets(
         cls,
         scope: str = "iris",
-        username_key: str = "iris-username",
-        password_key: str = "iris-password",
+        client_id_key: str = "iris-client-id",
+        client_secret_key: str = "iris-client-secret",
         topics: Optional[list[str]] = None,
         **kwargs,
     ) -> "IRISConfig":
@@ -142,8 +142,8 @@ class IRISConfig:
         
         Args:
             scope: Databricks secret scope name (default: "iris")
-            username_key: Key name for the username/API key secret (default: "iris-username")
-            password_key: Key name for the password/API secret (default: "iris-password")
+            client_id_key: Key name for the Client ID secret (default: "iris-client-id")
+            client_secret_key: Key name for the Client Secret (default: "iris-client-secret")
             topics: List of IRIS topics to subscribe to
             **kwargs: Additional IRISConfig parameters (host, port, use_tls, etc.)
         
@@ -160,41 +160,41 @@ class IRISConfig:
             # Custom secret scope and keys
             config = IRISConfig.from_databricks_secrets(
                 scope="my-scope",
-                username_key="elexon-api-key",
-                password_key="elexon-api-secret",
+                client_id_key="elexon-client-id",
+                client_secret_key="elexon-client-secret",
                 topics=[IRISTopics.FREQ],
             )
             ```
         
         Databricks Secret Setup:
             1. Create a secret scope: databricks secrets create-scope --scope iris
-            2. Add username: databricks secrets put --scope iris --key iris-username
-            3. Add password: databricks secrets put --scope iris --key iris-password
+            2. Add Client ID: databricks secrets put --scope iris --key iris-client-id
+            3. Add Client Secret: databricks secrets put --scope iris --key iris-client-secret
         """
         dbutils = get_dbutils()
         
         logger.info(f"Loading IRIS credentials from Databricks secret scope: {scope}")
         
         try:
-            username = dbutils.secrets.get(scope=scope, key=username_key)
-            password = dbutils.secrets.get(scope=scope, key=password_key)
+            client_id = dbutils.secrets.get(scope=scope, key=client_id_key)
+            client_secret = dbutils.secrets.get(scope=scope, key=client_secret_key)
         except Exception as e:
             raise ValueError(
                 f"Failed to retrieve IRIS credentials from Databricks secrets. "
-                f"Scope: '{scope}', Keys: '{username_key}', '{password_key}'. "
+                f"Scope: '{scope}', Keys: '{client_id_key}', '{client_secret_key}'. "
                 f"Ensure the secret scope exists and contains the required keys. "
                 f"Error: {e}"
             )
         
-        if not username or not password:
+        if not client_id or not client_secret:
             raise ValueError(
                 f"IRIS credentials from Databricks secrets are empty. "
-                f"Scope: '{scope}', Keys: '{username_key}', '{password_key}'"
+                f"Scope: '{scope}', Keys: '{client_id_key}', '{client_secret_key}'"
             )
         
         return cls(
-            username=username,
-            password=password,
+            client_id=client_id,
+            client_secret=client_secret,
             topics=topics if topics else cls.topics,
             **kwargs,
         )
@@ -204,8 +204,8 @@ class IRISConfig:
         """Generate AMQP connection URL."""
         protocol = "amqps" if self.use_tls else "amqp"
         auth = ""
-        if self.username and self.password:
-            auth = f"{self.username}:{self.password}@"
+        if self.client_id and self.client_secret:
+            auth = f"{self.client_id}:{self.client_secret}@"
         return f"{protocol}://{auth}{self.host}:{self.port}"
     
     def validate(self) -> None:

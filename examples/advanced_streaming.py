@@ -9,8 +9,8 @@ This example demonstrates more advanced usage patterns:
 
 Databricks Secret Setup (run once via Databricks CLI):
     databricks secrets create-scope --scope iris
-    databricks secrets put --scope iris --key iris-username
-    databricks secrets put --scope iris --key iris-password
+    databricks secrets put --scope iris --key iris-client-id
+    databricks secrets put --scope iris --key iris-client-secret
 """
 
 import os
@@ -255,8 +255,8 @@ def run_streaming():
     # Configure IRIS connection with credentials from Databricks secrets
     config = IRISConfig.from_databricks_secrets(
         scope="iris",
-        username_key="iris-username",
-        password_key="iris-password",
+        client_id_key="iris-client-id",
+        client_secret_key="iris-client-secret",
         topics=[
             IRISTopics.FREQ,
             IRISTopics.INDDEM,

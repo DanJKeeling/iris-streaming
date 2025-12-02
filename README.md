@@ -71,8 +71,8 @@ Before using the connector, set up your IRIS credentials in a Databricks secret 
 databricks secrets create-scope --scope iris
 
 # Add your IRIS API credentials
-databricks secrets put --scope iris --key iris-username
-databricks secrets put --scope iris --key iris-password
+databricks secrets put --scope iris --key iris-client-id
+databricks secrets put --scope iris --key iris-client-secret
 ```
 
 ## Quick Start
@@ -87,8 +87,8 @@ from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
 # Configure IRIS connection with Databricks secrets
 config = IRISConfig.from_databricks_secrets(
     scope="iris",
-    username_key="iris-username",
-    password_key="iris-password",
+    client_id_key="iris-client-id",
+    client_secret_key="iris-client-secret",
     topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
     # Use DBFS for checkpoint persistence
     checkpoint_location="/dbfs/checkpoints/iris/stream",
@@ -114,8 +114,8 @@ from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
 # Use custom secret scope and key names
 config = IRISConfig.from_databricks_secrets(
     scope="my-custom-scope",
-    username_key="elexon-api-key",
-    password_key="elexon-api-secret",
+    client_id_key="elexon-client-id",
+    client_secret_key="elexon-client-secret",
     topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
     checkpoint_location="/dbfs/checkpoints/iris/custom",
 )
@@ -172,8 +172,8 @@ See `IRISTopics` class for the complete list.
 |-----------|------|---------|-------------|
 | `host` | str | `bmrs-iris.elexon.co.uk` | IRIS server hostname |
 | `port` | int | `5671` | AMQP port (5671 for TLS) |
-| `username` | str | `""` | API key/username |
-| `password` | str | `""` | API secret/password |
+| `client_id` | str | `""` | OAuth Client ID |
+| `client_secret` | str | `""` | OAuth Client Secret |
 | `topics` | list | Various | Topics to subscribe to |
 | `use_tls` | bool | `True` | Enable TLS encryption |
 | `verify_ssl` | bool | `True` | Verify SSL certificates |
@@ -188,10 +188,10 @@ The recommended way to configure credentials in Databricks:
 
 ```python
 config = IRISConfig.from_databricks_secrets(
-    scope="iris",                    # Databricks secret scope name
-    username_key="iris-username",    # Key for username secret
-    password_key="iris-password",    # Key for password secret
-    topics=[...],                    # Topics to subscribe to
+    scope="iris",                        # Databricks secret scope name
+    client_id_key="iris-client-id",      # Key for Client ID secret
+    client_secret_key="iris-client-secret",  # Key for Client Secret
+    topics=[...],                        # Topics to subscribe to
     # Additional options can be passed as keyword arguments
     max_batch_size=1000,
     prefetch_count=200,
@@ -201,8 +201,8 @@ config = IRISConfig.from_databricks_secrets(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `scope` | str | `"iris"` | Databricks secret scope name |
-| `username_key` | str | `"iris-username"` | Secret key for API username |
-| `password_key` | str | `"iris-password"` | Secret key for API password |
+| `client_id_key` | str | `"iris-client-id"` | Secret key for Client ID |
+| `client_secret_key` | str | `"iris-client-secret"` | Secret key for Client Secret |
 
 ### Environment Variables (Alternative)
 
@@ -212,8 +212,8 @@ For non-Databricks environments, you can use environment variables:
 |----------|-------------|
 | `IRIS_HOST` | AMQP server hostname |
 | `IRIS_PORT` | AMQP port |
-| `IRIS_USERNAME` | Authentication username |
-| `IRIS_PASSWORD` | Authentication password |
+| `IRIS_CLIENT_ID` | OAuth Client ID |
+| `IRIS_CLIENT_SECRET` | OAuth Client Secret |
 | `IRIS_TOPICS` | Comma-separated list of topics |
 | `IRIS_USE_TLS` | Enable TLS (true/false) |
 | `IRIS_PREFETCH_COUNT` | Message prefetch count |

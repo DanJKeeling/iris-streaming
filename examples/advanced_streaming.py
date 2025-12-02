@@ -238,21 +238,19 @@ class IRISDataProcessor:
             print(f"\nErrors: {len(self.error_counts)}")
 
 
-def main():
-    # Configure output path
-    output_path = os.getenv("IRIS_OUTPUT_PATH", "/tmp/iris_data")
+def run_streaming():
+    """
+    Run the advanced IRIS streaming processor.
     
-    # Create Spark session with additional configs for better performance
-    spark = (
-        SparkSession.builder
-        .appName("IRIS Advanced Streaming")
-        .config("spark.sql.streaming.checkpointLocation", "/tmp/iris_advanced_checkpoint")
-        .config("spark.sql.shuffle.partitions", "4")
-        .config("spark.default.parallelism", "4")
-        .getOrCreate()
-    )
+    Call this function from a Databricks notebook or let it run automatically
+    when imported as a script.
+    """
+    # Configure output path - use DBFS for Databricks persistence
+    output_path = "/dbfs/iris_data"
+    checkpoint_path = "/dbfs/checkpoints/iris/advanced"
     
-    spark.sparkContext.setLogLevel("WARN")
+    # Get existing Spark session (provided by Databricks)
+    spark = SparkSession.builder.getOrCreate()
     
     # Configure IRIS connection with credentials from Databricks secrets
     config = IRISConfig.from_databricks_secrets(
@@ -284,27 +282,21 @@ def main():
         messages_df = source.get_batch_df(spark)
         processor.process_batch(messages_df, batch_id)
     
-    try:
-        # Start streaming query
-        query = (
-            trigger_df.writeStream
-            .foreachBatch(process)
-            .trigger(processingTime="5 seconds")
-            .option("checkpointLocation", "/tmp/iris_advanced_checkpoint")
-            .start()
-        )
-        
-        print("✅ Streaming started. Press Ctrl+C to stop.\n")
-        query.awaitTermination()
-        
-    except KeyboardInterrupt:
-        print("\n🛑 Shutting down...")
-    finally:
-        processor.print_summary()
-        source.stop()
-        spark.stop()
+    # Start streaming query
+    query = (
+        trigger_df.writeStream
+        .foreachBatch(process)
+        .trigger(processingTime="5 seconds")
+        .option("checkpointLocation", checkpoint_path)
+        .start()
+    )
+    
+    print("✅ Streaming started.")
+    print("   To stop: source.stop() or query.stop()")
+    
+    return query, source, processor
 
 
-if __name__ == "__main__":
-    main()
+# Auto-run when executed as script or in notebook
+query, source, processor = run_streaming()
 

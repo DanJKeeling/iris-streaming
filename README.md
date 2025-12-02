@@ -16,36 +16,53 @@ This connector enables real-time streaming of UK electricity market data from El
 - **Fault Tolerance**: Automatic reconnection and error handling
 - **Configurable Batching**: Control message batch sizes for optimal throughput
 
-## Installation
+## Databricks Setup
 
+### 1. Cluster Configuration
+
+The `python-qpid-proton` library requires system-level dependencies. Create a cluster init script:
+
+**Create init script** (`dbfs:/init-scripts/install-qpid-proton.sh`):
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+#!/bin/bash
+# Install Qpid Proton dependencies for AMQP 1.0 support
 
-# Or install individually
-pip install python-qpid-proton pyspark pydantic pydantic-settings structlog
+apt-get update
+apt-get install -y libqpid-proton-dev
+
+pip install python-qpid-proton
 ```
 
-### System Dependencies
-
-The `python-qpid-proton` library requires some system dependencies:
-
-**macOS:**
+**Upload to DBFS:**
 ```bash
-brew install qpid-proton
+databricks fs cp install-qpid-proton.sh dbfs:/init-scripts/install-qpid-proton.sh
 ```
 
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install libqpid-proton-dev python3-qpid-proton
+**Configure cluster:**
+1. Go to Compute → Select your cluster → Edit
+2. Under "Advanced options" → "Init Scripts"
+3. Add: `dbfs:/init-scripts/install-qpid-proton.sh`
+4. Restart the cluster
+
+**Alternative: Install via cluster libraries:**
+- Go to Compute → Select cluster → Libraries → Install New
+- Select PyPI and enter: `python-qpid-proton`
+
+> **Note**: PyPI installation may fail without the init script on some cluster types.
+
+### 2. Install the Connector
+
+Upload the `iris_connector` package to your Databricks workspace or install from a wheel:
+
+```python
+# In a notebook, install from workspace path
+%pip install /Workspace/path/to/iris_connector
+
+# Or from a wheel file on DBFS
+%pip install /dbfs/libraries/iris_connector-0.1.0-py3-none-any.whl
 ```
 
-**RHEL/CentOS:**
-```bash
-sudo yum install qpid-proton-c-devel python3-qpid-proton
-```
-
-## Databricks Secret Setup
+### 3. Secret Setup
 
 Before using the connector, set up your IRIS credentials in a Databricks secret scope:
 
@@ -60,14 +77,12 @@ databricks secrets put --scope iris --key iris-password
 
 ## Quick Start
 
-### 1. Basic Streaming Example (Recommended)
+### 1. Basic Streaming Example (Databricks Notebook)
 
 ```python
-from pyspark.sql import SparkSession
 from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
 
-# Create Spark session
-spark = SparkSession.builder.appName("IRIS Stream").getOrCreate()
+# spark is already available in Databricks notebooks
 
 # Configure IRIS connection with Databricks secrets
 config = IRISConfig.from_databricks_secrets(
@@ -75,6 +90,8 @@ config = IRISConfig.from_databricks_secrets(
     username_key="iris-username",
     password_key="iris-password",
     topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
+    # Use DBFS for checkpoint persistence
+    checkpoint_location="/dbfs/checkpoints/iris/stream",
 )
 
 # Process messages
@@ -83,8 +100,10 @@ def process_messages(df, batch_id):
 
 # Start streaming
 processor = IRISStreamProcessor(spark, config)
-processor.start(process_messages, trigger_interval="2 seconds")
-processor.await_termination()
+query = processor.start(process_messages, trigger_interval="2 seconds")
+
+# To stop the stream:
+# processor.stop()
 ```
 
 ### 2. Custom Secret Scope and Keys
@@ -98,12 +117,13 @@ config = IRISConfig.from_databricks_secrets(
     username_key="elexon-api-key",
     password_key="elexon-api-secret",
     topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
+    checkpoint_location="/dbfs/checkpoints/iris/custom",
 )
 
 processor = IRISStreamProcessor(spark, config)
 ```
 
-### 3. Direct AMQP Client (without PySpark)
+### 3. Test Connectivity (Direct AMQP Client)
 
 ```python
 from iris_connector import IRISAMQPClient, IRISConfig, IRISTopics
@@ -114,11 +134,17 @@ config = IRISConfig.from_databricks_secrets(
     topics=[IRISTopics.FREQ],
 )
 
-with IRISAMQPClient(config) as client:
-    while True:
-        messages = client.get_batch(max_size=100, timeout=1.0)
-        for msg in messages:
-            print(f"Topic: {msg.topic}, Body: {msg.body}")
+# Connect and receive some messages
+client = IRISAMQPClient(config)
+client.start()
+
+# Get a batch of messages
+messages = client.get_batch(max_size=10, timeout=10.0)
+for msg in messages:
+    print(f"Topic: {msg.topic}, Body: {msg.body}")
+
+# Remember to stop when done
+client.stop()
 ```
 
 ## Available Topics

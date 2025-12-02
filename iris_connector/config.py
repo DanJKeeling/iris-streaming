@@ -89,8 +89,8 @@ class IRISConfig:
     max_batch_size: int = 1000
     idle_timeout: int = 120
     
-    # Spark settings
-    checkpoint_location: str = "/tmp/iris_checkpoint"
+    # Spark settings - use DBFS path for Databricks persistence
+    checkpoint_location: str = "/dbfs/checkpoints/iris"
     
     @classmethod
     def from_env(cls) -> "IRISConfig":

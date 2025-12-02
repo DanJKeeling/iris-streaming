@@ -5,18 +5,20 @@ This example demonstrates using the IRIS AMQP client directly
 without PySpark, useful for testing connectivity and exploring
 the message format.
 
-Note: This example runs in Databricks and retrieves credentials
-from Databricks secret scope.
+Databricks Setup:
+    1. Install cluster library: python-qpid-proton (via PyPI)
+    2. Set up secrets (run once via Databricks CLI):
+        databricks secrets create-scope --scope iris
+        databricks secrets put --scope iris --key iris-username
+        databricks secrets put --scope iris --key iris-password
 
-Databricks Secret Setup (run once via Databricks CLI):
-    databricks secrets create-scope --scope iris
-    databricks secrets put --scope iris --key iris-username
-    databricks secrets put --scope iris --key iris-password
+Usage in Databricks notebook:
+    client = test_iris_connection()
+    # ... view messages ...
+    client.stop()
 """
 
 import json
-import signal
-import sys
 from datetime import datetime
 
 from iris_connector import IRISConfig, IRISAMQPClient, IRISTopics
@@ -39,7 +41,28 @@ def format_message(msg):
         print(f"🏷️  Properties: {msg.properties}")
 
 
-def main():
+def test_iris_connection(num_messages: int = 10) -> IRISAMQPClient:
+    """
+    Test IRIS connectivity and receive a sample of messages.
+    
+    This function is designed to be run in a Databricks notebook cell.
+    It connects to IRIS, receives a specified number of messages, 
+    and returns the client for further interaction.
+    
+    Args:
+        num_messages: Number of messages to receive before returning
+        
+    Returns:
+        IRISAMQPClient instance (remember to call client.stop() when done)
+        
+    Example:
+        >>> client = test_iris_connection(num_messages=5)
+        >>> # View more messages
+        >>> for msg in client.get_batch(max_size=10, timeout=5.0):
+        ...     format_message(msg)
+        >>> # When done
+        >>> client.stop()
+    """
     # Configure IRIS connection with credentials from Databricks secrets
     config = IRISConfig.from_databricks_secrets(
         scope="iris",
@@ -57,71 +80,52 @@ def main():
     print(f"📋 Topics: {config.topics}")
     print()
     
-    # Setup graceful shutdown
-    running = True
-    
-    def signal_handler(sig, frame):
-        nonlocal running
-        print("\n\n🛑 Shutdown requested...")
-        running = False
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Connect and receive messages
+    # Connect to IRIS
     client = IRISAMQPClient(config)
     
-    try:
-        print("⏳ Connecting to IRIS...")
-        
-        if not client.start(timeout=30):
-            print("❌ Failed to connect to IRIS")
-            sys.exit(1)
-        
-        print("✅ Connected successfully!")
-        print("📥 Waiting for messages (Ctrl+C to stop)...\n")
-        
-        message_count = 0
-        start_time = datetime.now()
-        
-        while running:
-            # Get messages with a 1-second timeout
-            messages = client.get_batch(max_size=10, timeout=1.0)
-            
-            for msg in messages:
-                message_count += 1
-                format_message(msg)
-            
-            # Print periodic stats
-            if message_count > 0 and message_count % 50 == 0:
-                elapsed = (datetime.now() - start_time).total_seconds()
-                rate = message_count / elapsed
-                print(f"\n📊 Stats: {message_count} messages in {elapsed:.0f}s ({rate:.1f} msg/s)")
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        raise
+    print("⏳ Connecting to IRIS...")
     
-    finally:
-        print("\n🔌 Disconnecting...")
-        client.stop()
+    if not client.start(timeout=30):
+        print("❌ Failed to connect to IRIS")
+        raise ConnectionError("Failed to connect to IRIS")
+    
+    print("✅ Connected successfully!")
+    print(f"📥 Receiving {num_messages} messages...\n")
+    
+    message_count = 0
+    start_time = datetime.now()
+    
+    # Receive specified number of messages
+    while message_count < num_messages:
+        messages = client.get_batch(max_size=10, timeout=5.0)
         
-        # Print final stats
-        elapsed = (datetime.now() - start_time).total_seconds()
-        print(f"\n📊 Final Stats:")
-        print(f"   Messages received: {message_count}")
-        print(f"   Duration: {elapsed:.1f} seconds")
-        if elapsed > 0:
-            print(f"   Average rate: {message_count/elapsed:.2f} msg/s")
-        
-        # Check for errors
-        errors = client.get_errors()
-        if errors:
-            print(f"\n⚠️  Errors encountered: {len(errors)}")
-            for timestamp, error in errors[-5:]:  # Show last 5 errors
-                print(f"   [{timestamp}] {error}")
+        if not messages:
+            print("⏳ Waiting for messages...")
+            continue
+            
+        for msg in messages:
+            message_count += 1
+            format_message(msg)
+            
+            if message_count >= num_messages:
+                break
+    
+    # Print stats
+    elapsed = (datetime.now() - start_time).total_seconds()
+    print(f"\n{'─'*60}")
+    print(f"📊 Received {message_count} messages in {elapsed:.1f}s")
+    if elapsed > 0:
+        print(f"   Rate: {message_count/elapsed:.2f} msg/s")
+    
+    print("\n💡 Client is still connected. To continue receiving messages:")
+    print("   >>> messages = client.get_batch(max_size=10, timeout=5.0)")
+    print("   >>> for msg in messages: format_message(msg)")
+    print("\n   When done, call: client.stop()")
+    
+    return client
 
 
-if __name__ == "__main__":
-    main()
+# When run in a notebook, this provides a quick connectivity test
+# Run: client = test_iris_connection()
+# Stop: client.stop()
 

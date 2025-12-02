@@ -3,6 +3,11 @@ Basic IRIS Streaming Example
 
 This example demonstrates how to connect to Elexon's IRIS AMQP service
 and stream messages into PySpark for processing.
+
+Databricks Secret Setup (run once via Databricks CLI):
+    databricks secrets create-scope --scope iris
+    databricks secrets put --scope iris --key iris-username
+    databricks secrets put --scope iris --key iris-password
 """
 
 from pyspark.sql import SparkSession
@@ -23,12 +28,12 @@ def main():
     
     spark.sparkContext.setLogLevel("WARN")
     
-    # Configure IRIS connection
-    config = IRISConfig(
-        host="bmrs-iris.elexon.co.uk",
-        port=5671,
-        username="YOUR_API_KEY",      # Replace with your API key
-        password="YOUR_API_SECRET",    # Replace with your API secret
+    # Configure IRIS connection with credentials from Databricks secrets
+    # Secrets are retrieved from scope "iris" with keys "iris-username" and "iris-password"
+    config = IRISConfig.from_databricks_secrets(
+        scope="iris",
+        username_key="iris-username",
+        password_key="iris-password",
         topics=[
             IRISTopics.FREQ,           # System Frequency
             IRISTopics.INDDEM,         # Indicated Demand

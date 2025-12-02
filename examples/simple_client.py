@@ -4,6 +4,14 @@ Simple IRIS Client Example (without PySpark)
 This example demonstrates using the IRIS AMQP client directly
 without PySpark, useful for testing connectivity and exploring
 the message format.
+
+Note: This example runs in Databricks and retrieves credentials
+from Databricks secret scope.
+
+Databricks Secret Setup (run once via Databricks CLI):
+    databricks secrets create-scope --scope iris
+    databricks secrets put --scope iris --key iris-username
+    databricks secrets put --scope iris --key iris-password
 """
 
 import json
@@ -32,12 +40,11 @@ def format_message(msg):
 
 
 def main():
-    # Configure IRIS connection
-    config = IRISConfig(
-        host="bmrs-iris.elexon.co.uk",
-        port=5671,
-        username="YOUR_API_KEY",      # Replace with your API key
-        password="YOUR_API_SECRET",    # Replace with your API secret
+    # Configure IRIS connection with credentials from Databricks secrets
+    config = IRISConfig.from_databricks_secrets(
+        scope="iris",
+        username_key="iris-username",
+        password_key="iris-password",
         topics=[
             IRISTopics.FREQ,           # System Frequency (updates every 2 seconds)
         ],

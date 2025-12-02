@@ -10,6 +10,7 @@ This connector enables real-time streaming of UK electricity market data from El
 
 - **AMQP 1.0 Protocol Support**: Uses Apache Qpid Proton for full AMQP 1.0 compatibility
 - **PySpark Structured Streaming Integration**: Works with Spark's modern streaming API
+- **Databricks Secret Integration**: Secure credential management via Databricks secret scopes
 - **Multiple Topics**: Subscribe to multiple BMRS data feeds simultaneously
 - **TLS/SSL Security**: Secure connections to IRIS
 - **Fault Tolerance**: Automatic reconnection and error handling
@@ -44,9 +45,22 @@ sudo apt-get install libqpid-proton-dev python3-qpid-proton
 sudo yum install qpid-proton-c-devel python3-qpid-proton
 ```
 
+## Databricks Secret Setup
+
+Before using the connector, set up your IRIS credentials in a Databricks secret scope:
+
+```bash
+# Create the secret scope (run once)
+databricks secrets create-scope --scope iris
+
+# Add your IRIS API credentials
+databricks secrets put --scope iris --key iris-username
+databricks secrets put --scope iris --key iris-password
+```
+
 ## Quick Start
 
-### 1. Basic Streaming Example
+### 1. Basic Streaming Example (Recommended)
 
 ```python
 from pyspark.sql import SparkSession
@@ -55,10 +69,11 @@ from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
 # Create Spark session
 spark = SparkSession.builder.appName("IRIS Stream").getOrCreate()
 
-# Configure IRIS connection
-config = IRISConfig(
-    username="YOUR_API_KEY",
-    password="YOUR_API_SECRET",
+# Configure IRIS connection with Databricks secrets
+config = IRISConfig.from_databricks_secrets(
+    scope="iris",
+    username_key="iris-username",
+    password_key="iris-password",
     topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
 )
 
@@ -72,18 +87,19 @@ processor.start(process_messages, trigger_interval="2 seconds")
 processor.await_termination()
 ```
 
-### 2. Using Environment Variables
-
-```bash
-export IRIS_USERNAME="your_api_key"
-export IRIS_PASSWORD="your_api_secret"
-export IRIS_TOPICS="bmrs/FREQ,bmrs/INDDEM,bmrs/INDGEN"
-```
+### 2. Custom Secret Scope and Keys
 
 ```python
-from iris_connector import IRISConfig, IRISStreamProcessor
+from iris_connector import IRISConfig, IRISStreamProcessor, IRISTopics
 
-config = IRISConfig.from_env()
+# Use custom secret scope and key names
+config = IRISConfig.from_databricks_secrets(
+    scope="my-custom-scope",
+    username_key="elexon-api-key",
+    password_key="elexon-api-secret",
+    topics=[IRISTopics.FREQ, IRISTopics.INDDEM],
+)
+
 processor = IRISStreamProcessor(spark, config)
 ```
 
@@ -92,9 +108,9 @@ processor = IRISStreamProcessor(spark, config)
 ```python
 from iris_connector import IRISAMQPClient, IRISConfig, IRISTopics
 
-config = IRISConfig(
-    username="YOUR_API_KEY",
-    password="YOUR_API_SECRET",
+# Credentials retrieved from Databricks secrets
+config = IRISConfig.from_databricks_secrets(
+    scope="iris",
     topics=[IRISTopics.FREQ],
 )
 
@@ -140,7 +156,31 @@ See `IRISTopics` class for the complete list.
 | `connection_timeout` | int | `30` | Connection timeout (seconds) |
 | `checkpoint_location` | str | `/tmp/iris_checkpoint` | Spark checkpoint dir |
 
-### Environment Variables
+### Databricks Secrets (Recommended)
+
+The recommended way to configure credentials in Databricks:
+
+```python
+config = IRISConfig.from_databricks_secrets(
+    scope="iris",                    # Databricks secret scope name
+    username_key="iris-username",    # Key for username secret
+    password_key="iris-password",    # Key for password secret
+    topics=[...],                    # Topics to subscribe to
+    # Additional options can be passed as keyword arguments
+    max_batch_size=1000,
+    prefetch_count=200,
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `scope` | str | `"iris"` | Databricks secret scope name |
+| `username_key` | str | `"iris-username"` | Secret key for API username |
+| `password_key` | str | `"iris-password"` | Secret key for API password |
+
+### Environment Variables (Alternative)
+
+For non-Databricks environments, you can use environment variables:
 
 | Variable | Description |
 |----------|-------------|

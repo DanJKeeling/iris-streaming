@@ -6,6 +6,11 @@ This example demonstrates more advanced usage patterns:
 - Writing to different sinks (Parquet, Delta, console)
 - Watermarking and windowed aggregations
 - Error handling and monitoring
+
+Databricks Secret Setup (run once via Databricks CLI):
+    databricks secrets create-scope --scope iris
+    databricks secrets put --scope iris --key iris-username
+    databricks secrets put --scope iris --key iris-password
 """
 
 import os
@@ -249,12 +254,11 @@ def main():
     
     spark.sparkContext.setLogLevel("WARN")
     
-    # Configure IRIS connection
-    config = IRISConfig(
-        host="bmrs-iris.elexon.co.uk",
-        port=5671,
-        username=os.getenv("IRIS_USERNAME", "YOUR_API_KEY"),
-        password=os.getenv("IRIS_PASSWORD", "YOUR_API_SECRET"),
+    # Configure IRIS connection with credentials from Databricks secrets
+    config = IRISConfig.from_databricks_secrets(
+        scope="iris",
+        username_key="iris-username",
+        password_key="iris-password",
         topics=[
             IRISTopics.FREQ,
             IRISTopics.INDDEM,

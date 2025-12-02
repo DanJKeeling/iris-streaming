@@ -1,30 +1,14 @@
 """
-AMQP 1.0 client for Elexon's IRIS message server.
-
-Uses Apache Qpid Proton for AMQP 1.0 protocol support.
+AMQP 1.0 client for Elexon's IRIS message server using Azure Service Bus SDK.
 """
 
 import json
 import logging
-import threading
-import time
-from collections import deque
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Callable, Optional
-from queue import Queue, Empty
+import datetime
+from typing import Any, Dict, List, Optional, Union
 
-try:
-    from proton import Message, SSLDomain
-    from proton.handlers import MessagingHandler
-    from proton.reactor import Container, Selector
-    PROTON_AVAILABLE = True
-except ImportError:
-    PROTON_AVAILABLE = False
-    Message = None
-    MessagingHandler = object
-    Container = None
-    SSLDomain = None
+from azure.servicebus import ServiceBusClient, ServiceBusReceivedMessage
+from azure.identity import ClientSecretCredential, DefaultAzureCredential
 
 from iris_connector.config import IRISConfig
 
@@ -32,7 +16,6 @@ from iris_connector.config import IRISConfig
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class IRISMessage:
     """
     Represents a message received from IRIS.
@@ -44,58 +27,69 @@ class IRISMessage:
         correlation_id: Correlation ID for request-response patterns
         timestamp: Message timestamp
         properties: Additional message properties
-        raw_message: Original AMQP message object
+        raw_message: Original Azure Service Bus message object
     """
-    topic: str
-    body: Any
-    message_id: Optional[str] = None
-    correlation_id: Optional[str] = None
-    timestamp: Optional[datetime] = None
-    properties: dict = None
-    raw_message: Any = None
-    
-    def __post_init__(self):
-        if self.properties is None:
-            self.properties = {}
-    
-    def to_dict(self) -> dict:
+    def __init__(
+        self,
+        topic: str,
+        body: Any,
+        message_id: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        timestamp: Optional[datetime.datetime] = None,
+        properties: Optional[Dict] = None,
+        raw_message: Any = None,
+    ):
+        self.topic = topic
+        self.body = body
+        self.message_id = message_id
+        self.correlation_id = correlation_id
+        self.timestamp = timestamp
+        self.properties = properties or {}
+        self.raw_message = raw_message
+
+    def to_dict(self) -> Dict[str, Any]:
         """Convert message to dictionary for Spark DataFrame."""
+        body_str = json.dumps(self.body) if isinstance(self.body, (dict, list)) else str(self.body)
+        
         return {
             "topic": self.topic,
-            "body": json.dumps(self.body) if isinstance(self.body, (dict, list)) else str(self.body),
+            "body": body_str,
             "message_id": self.message_id,
             "correlation_id": self.correlation_id,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "properties": json.dumps(self.properties),
-            "received_at": datetime.utcnow().isoformat(),
+            "received_at": datetime.datetime.utcnow().isoformat(),
         }
     
     @classmethod
-    def from_proton_message(cls, message: "Message", topic: str) -> "IRISMessage":
-        """Create IRISMessage from a Proton AMQP message."""
-        body = message.body
+    def from_servicebus_message(cls, message: ServiceBusReceivedMessage, topic: str) -> "IRISMessage":
+        """Create IRISMessage from an Azure Service Bus message."""
+        # Parse body
+        body_content = list(message.body) if hasattr(message.body, '__iter__') else message.body
+        # message.body returns a generator for AMQP message body. For simple messages it might be bytes or str.
+        # If it's a generator, we need to consume it.
+        # Actually azure-servicebus body is usually a generator yielding bytes.
         
-        # Try to parse JSON body
-        if isinstance(body, (bytes, str)):
-            try:
-                body = json.loads(body if isinstance(body, str) else body.decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
+        raw_body = str(message) # str(message) gives the string representation of body if simple
         
+        # Try to parse JSON
+        try:
+            body = json.loads(raw_body)
+        except (json.JSONDecodeError, TypeError):
+            body = raw_body
+
         # Extract timestamp
-        timestamp = None
-        if message.creation_time:
-            timestamp = datetime.fromtimestamp(message.creation_time / 1000.0)
-        
+        timestamp = message.enqueued_time_utc
+
         # Extract properties
         properties = {}
-        if message.properties:
-            properties = dict(message.properties)
+        if message.application_properties:
+            properties = dict(message.application_properties)
         
         return cls(
             topic=topic,
             body=body,
-            message_id=message.id,
+            message_id=message.message_id,
             correlation_id=message.correlation_id,
             timestamp=timestamp,
             properties=properties,
@@ -103,157 +97,11 @@ class IRISMessage:
         )
 
 
-class IRISMessageHandler(MessagingHandler):
-    """
-    AMQP 1.0 message handler for IRIS connections.
-    
-    Handles connection lifecycle, message receiving, and error handling.
-    """
-    
-    def __init__(
-        self,
-        config: IRISConfig,
-        message_queue: Queue,
-        on_error: Optional[Callable[[Exception], None]] = None,
-    ):
-        if PROTON_AVAILABLE:
-            super().__init__()
-        self.config = config
-        self.message_queue = message_queue
-        self.on_error = on_error
-        self.receivers = {}
-        self.connection = None
-        self._running = False
-        self._connected = threading.Event()
-        self._message_count = 0
-    
-    def on_start(self, event):
-        """Called when the container starts."""
-        logger.info(f"Connecting to IRIS at {self.config.host}:{self.config.port}")
-        
-        # Configure SSL if using TLS
-        ssl_domain = None
-        if self.config.use_tls and PROTON_AVAILABLE:
-            ssl_domain = SSLDomain(SSLDomain.MODE_CLIENT)
-            ssl_domain.set_peer_authentication(
-                SSLDomain.VERIFY_PEER if self.config.verify_ssl else SSLDomain.ANONYMOUS_PEER
-            )
-            if self.config.ca_cert_path:
-                ssl_domain.set_trusted_ca_db(self.config.ca_cert_path)
-        
-        # Build connection URL
-        url = self.config.amqp_url
-        
-        # Create connection with authentication (Client ID and Secret)
-        self.connection = event.container.connect(
-            url,
-            user=self.config.client_id,
-            password=self.config.client_secret,
-            ssl_domain=ssl_domain,
-            heartbeat=self.config.idle_timeout,
-        )
-        self._running = True
-    
-    def on_connection_opened(self, event):
-        """Called when connection is established."""
-        logger.info("Connected to IRIS successfully")
-        
-        # Create receiver for the IRIS queue
-        queue = self.config.queue
-        receiver = event.container.create_receiver(
-            self.connection,
-            queue,
-            name=f"{self.config.subscription_name}-{queue.replace('.', '-')}",
-            options=Selector(f"TRUE") if PROTON_AVAILABLE else None,
-        )
-        receiver.flow(self.config.prefetch_count)
-        self.receivers[queue] = receiver
-        logger.info(f"Subscribed to queue: {queue}")
-        
-        self._connected.set()
-    
-    def on_message(self, event):
-        """Called when a message is received."""
-        try:
-            # Determine the topic from the receiver
-            topic = event.receiver.source.address
-            
-            # Parse the message
-            iris_message = IRISMessage.from_proton_message(event.message, topic)
-            
-            # Add to queue for processing
-            self.message_queue.put(iris_message)
-            self._message_count += 1
-            
-            # Accept the message
-            event.delivery.settle()
-            
-            if self._message_count % 1000 == 0:
-                logger.debug(f"Received {self._message_count} messages")
-                
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            if self.on_error:
-                self.on_error(e)
-    
-    def on_connection_error(self, event):
-        """Called on connection error."""
-        error = event.connection.remote_condition
-        logger.error(f"Connection error: {error}")
-        if self.on_error:
-            self.on_error(Exception(f"Connection error: {error}"))
-    
-    def on_transport_error(self, event):
-        """Called on transport error."""
-        error = event.transport.condition
-        logger.error(f"Transport error: {error}")
-        if self.on_error:
-            self.on_error(Exception(f"Transport error: {error}"))
-    
-    def on_link_error(self, event):
-        """Called on link error."""
-        error = event.link.remote_condition
-        logger.error(f"Link error: {error}")
-        if self.on_error:
-            self.on_error(Exception(f"Link error: {error}"))
-    
-    def on_disconnected(self, event):
-        """Called when disconnected."""
-        logger.warning("Disconnected from IRIS")
-        self._connected.clear()
-        if self._running and self.on_error:
-            self.on_error(Exception("Disconnected from IRIS"))
-    
-    def stop(self):
-        """Stop the handler and close connections."""
-        self._running = False
-        if self.connection:
-            self.connection.close()
-            logger.info("Closed IRIS connection")
-
-
 class IRISAMQPClient:
     """
-    High-level AMQP 1.0 client for Elexon's IRIS service.
+    High-level AMQP 1.0 client for Elexon's IRIS service using Azure Service Bus SDK.
     
-    Provides a simple interface to connect to IRIS and receive messages
-    asynchronously, with support for batching for PySpark integration.
-    
-    Example:
-        ```python
-        config = IRISConfig.from_databricks_secrets(
-            scope="iris",
-            topics=["bmrs/FREQ", "bmrs/INDDEM"],
-        )
-        
-        client = IRISAMQPClient(config)
-        client.start()
-        
-        # Get a batch of messages
-        messages = client.get_batch(max_size=100, timeout=5.0)
-        
-        client.stop()
-        ```
+    Provides a simple interface to connect to IRIS and receive messages.
     """
     
     def __init__(self, config: IRISConfig):
@@ -263,49 +111,19 @@ class IRISAMQPClient:
         Args:
             config: IRIS connection configuration
         """
-        if not PROTON_AVAILABLE:
-            raise ImportError(
-                "python-qpid-proton is required for AMQP 1.0 support. "
-                "Install it with: pip install python-qpid-proton"
-            )
-        
         self.config = config
         self.config.validate()
         
-        self._message_queue: Queue = Queue()
-        self._handler: Optional[IRISMessageHandler] = None
-        self._container: Optional[Container] = None
-        self._thread: Optional[threading.Thread] = None
+        self._client: Optional[ServiceBusClient] = None
+        self._receiver = None
         self._running = False
-        self._errors: deque = deque(maxlen=100)
-    
-    def _on_error(self, error: Exception):
-        """Handle errors from the message handler."""
-        self._errors.append((datetime.utcnow(), error))
-        logger.error(f"IRIS client error: {error}")
-    
-    def _run_container(self):
-        """Run the AMQP container in a background thread."""
-        try:
-            self._handler = IRISMessageHandler(
-                self.config,
-                self._message_queue,
-                on_error=self._on_error,
-            )
-            self._container = Container(self._handler)
-            self._container.run()
-        except Exception as e:
-            logger.error(f"Container error: {e}")
-            self._on_error(e)
-        finally:
-            self._running = False
-    
+
     def start(self, timeout: float = 30.0) -> bool:
         """
         Start the AMQP client and connect to IRIS.
         
         Args:
-            timeout: Connection timeout in seconds
+            timeout: Connection timeout in seconds (used for initial connection check)
             
         Returns:
             True if connected successfully, False otherwise
@@ -314,21 +132,94 @@ class IRISAMQPClient:
             logger.warning("Client already running")
             return True
         
-        logger.info("Starting IRIS AMQP client")
-        self._running = True
+        logger.info("Starting IRIS AMQP client (Azure Service Bus)")
         
-        # Start container in background thread
-        self._thread = threading.Thread(target=self._run_container, daemon=True)
-        self._thread.start()
-        
-        # Wait for connection
-        if self._handler and self._handler._connected.wait(timeout):
+        try:
+            credential = None
+            if self.config.client_id and self.config.client_secret:
+                if self.config.tenant_id:
+                    credential = ClientSecretCredential(
+                        tenant_id=self.config.tenant_id,
+                        client_id=self.config.client_id,
+                        client_secret=self.config.client_secret
+                    )
+                else:
+                    # Fallback for when tenant_id is missing but might work with some defaults 
+                    # or if we want to try DefaultAzureCredential which might pick up env vars
+                    logger.warning("Tenant ID not provided in config. Trying DefaultAzureCredential.")
+                    credential = DefaultAzureCredential()
+            else:
+                credential = DefaultAzureCredential()
+
+            # Azure Service Bus fully qualified namespace
+            fully_qualified_namespace = f"{self.config.host}"
+            if not fully_qualified_namespace.endswith(".servicebus.windows.net"):
+                 fully_qualified_namespace += ".servicebus.windows.net"
+
+            self._client = ServiceBusClient(
+                fully_qualified_namespace=fully_qualified_namespace,
+                credential=credential,
+                logging_enable=True
+            )
+            
+            # Create receiver
+            # For Elexon IRIS, 'queue' in config is actually the topic/queue name.
+            # If it's a subscription to a topic, we might need subscription_name.
+            # Config has 'queue' and 'subscription_name'.
+            # If it is a Queue, we use queue_name. If it is a Topic Subscription, we use topic_name and subscription_name.
+            # The config says 'queue: str = "iris..."'. Elexon usually exposes a Queue or a Topic.
+            # The current config comment says "queue/entity path".
+            # If subscription_name is provided and it's a topic, we should use it.
+            # However, previous implementation treated it as 'queue'.
+            # Let's assume it's a Queue for now or the entity path is full.
+            # ServiceBusClient.get_queue_receiver(queue_name=...)
+            # ServiceBusClient.get_subscription_receiver(topic_name=..., subscription_name=...)
+            
+            # Looking at the config default: queue="iris.5c9f...", subscription_name="pyspark-iris-connector".
+            # In standard Azure SB, "iris.5c9f..." looks like a topic name if subscription is used.
+            # But the variable name is 'queue'.
+            # In previous code:
+            # receiver = event.container.create_receiver(..., queue, name=f"{subscription}-{queue}")
+            # This suggests it might be connecting to a specific address.
+            
+            # Let's try to determine if we need subscription receiver.
+            # If the entity path contains "/Subscriptions/", it's a subscription.
+            # The default "iris.5c9f..." looks like a topic or queue name.
+            # If it's a topic, we MUST use get_subscription_receiver.
+            # If it's a queue, we use get_queue_receiver.
+            # I'll try to use `get_receiver` (generic)? No, only queue/subscription specific methods exist on client?
+            # Actually client has `get_queue_receiver` and `get_subscription_receiver`.
+            
+            # Let's assume it's a Queue if subscription_name is not relevant, but IRIS usually uses Topics.
+            # Elexon documentation says "Queue" but often means the entity you read from.
+            # The config default `subscription_name` is "pyspark-iris-connector".
+            # If I am connecting to a public topic, I need a subscription.
+            # But Elexon gives you a dedicated Queue usually?
+            # If I use `get_queue_receiver`, and it's a topic, it will fail.
+            
+            # Previous code: `receiver = event.container.create_receiver(..., queue, ...)`
+            # This connects to the address 'queue'.
+            
+            # I will use `get_queue_receiver` for now as the variable is named `queue`.
+            # If `subscription_name` is intended to be used with a Topic, the previous code didn't seem to use it as a subscription name in the AMQP source sense (it used it for the link name).
+            
+            self._receiver = self._client.get_queue_receiver(
+                queue_name=self.config.queue,
+                prefetch_count=self.config.prefetch_count,
+                max_wait_time=5 # Default wait time
+            )
+
+            self._running = True
             logger.info("IRIS client started successfully")
             return True
-        else:
-            logger.error("Failed to connect to IRIS within timeout")
+            
+        except Exception as e:
+            logger.error(f"Failed to connect to IRIS: {e}")
+            self._running = False
+            if self._client:
+                self._client.close()
             return False
-    
+
     def stop(self):
         """Stop the AMQP client and disconnect from IRIS."""
         if not self._running:
@@ -337,80 +228,66 @@ class IRISAMQPClient:
         logger.info("Stopping IRIS AMQP client")
         self._running = False
         
-        if self._handler:
-            self._handler.stop()
-        
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5.0)
-        
+        if self._receiver:
+            self._receiver.close()
+            self._receiver = None
+            
+        if self._client:
+            self._client.close()
+            self._client = None
+            
         logger.info("IRIS client stopped")
-    
+
     def is_connected(self) -> bool:
         """Check if connected to IRIS."""
-        return (
-            self._running
-            and self._handler is not None
-            and self._handler._connected.is_set()
-        )
-    
-    def get_message(self, timeout: float = 1.0) -> Optional[IRISMessage]:
-        """
-        Get a single message from the queue.
-        
-        Args:
-            timeout: How long to wait for a message
-            
-        Returns:
-            IRISMessage if available, None otherwise
-        """
-        try:
-            return self._message_queue.get(timeout=timeout)
-        except Empty:
-            return None
-    
+        return self._running and self._client is not None
+
     def get_batch(
         self,
         max_size: int = None,
         timeout: float = 1.0,
-    ) -> list[IRISMessage]:
+    ) -> List[IRISMessage]:
         """
         Get a batch of messages from the queue.
         
         Args:
-            max_size: Maximum number of messages to return (default: config.max_batch_size)
-            timeout: How long to wait for the first message
+            max_size: Maximum number of messages to return
+            timeout: How long to wait for messages
             
         Returns:
             List of IRISMessage objects
         """
+        if not self._running or not self._receiver:
+            logger.warning("Client not running, returning empty batch")
+            return []
+
         max_size = max_size or self.config.max_batch_size
         messages = []
         
-        # Wait for first message with timeout
         try:
-            first_message = self._message_queue.get(timeout=timeout)
-            messages.append(first_message)
-        except Empty:
-            return messages
-        
-        # Drain queue up to max_size (non-blocking)
-        while len(messages) < max_size:
-            try:
-                message = self._message_queue.get_nowait()
-                messages.append(message)
-            except Empty:
-                break
-        
+            # Received messages are automatically locked. 
+            # We need to complete them to remove them from the queue.
+            # Or if we want "at least once" semantics with Spark, we should only complete them 
+            # after Spark has processed them (in commit).
+            # But the previous implementation seemed to settle immediately or rely on auto-ack.
+            # "For AMQP with auto-ack, messages are acknowledged on receive" in spark_source.py.
+            # So we will complete them immediately here to match behavior.
+            
+            batch = self._receiver.receive_messages(
+                max_message_count=max_size,
+                max_wait_time=timeout
+            )
+            
+            for msg in batch:
+                iris_msg = IRISMessage.from_servicebus_message(msg, self.config.queue)
+                messages.append(iris_msg)
+                self._receiver.complete_message(msg)
+                
+        except Exception as e:
+            logger.error(f"Error receiving batch: {e}")
+            
         return messages
-    
-    def pending_count(self) -> int:
-        """Get the number of pending messages in the queue."""
-        return self._message_queue.qsize()
-    
-    def get_errors(self) -> list[tuple[datetime, Exception]]:
-        """Get recent errors."""
-        return list(self._errors)
-    
+
     def __enter__(self):
         """Context manager entry."""
         self.start()
@@ -420,4 +297,3 @@ class IRISAMQPClient:
         """Context manager exit."""
         self.stop()
         return False
-

@@ -8,51 +8,20 @@ This connector enables real-time streaming of UK electricity market data from El
 
 ## Features
 
-- **AMQP 1.0 Protocol Support**: Uses Apache Qpid Proton for full AMQP 1.0 compatibility
+- **AMQP 1.0 Protocol Support**: Uses Azure Service Bus SDK for robust AMQP 1.0 connectivity
 - **PySpark Structured Streaming Integration**: Works with Spark's modern streaming API
+- **Azure Active Directory Support**: Authenticate securely using Client ID, Secret, and Tenant ID
 - **Databricks Secret Integration**: Secure credential management via Databricks secret scopes
 - **Multiple Topics**: Subscribe to multiple BMRS data feeds simultaneously
-- **TLS/SSL Security**: Secure connections to IRIS
 - **Fault Tolerance**: Automatic reconnection and error handling
 - **Configurable Batching**: Control message batch sizes for optimal throughput
 
 ## Databricks Setup
 
-### 1. Cluster Configuration
+### 1. Install the Connector
 
-The `python-qpid-proton` library requires system-level dependencies. Create a cluster init script:
-
-**Create init script** (`dbfs:/init-scripts/install-qpid-proton.sh`):
-```bash
-#!/bin/bash
-# Install Qpid Proton dependencies for AMQP 1.0 support
-
-apt-get update
-apt-get install -y libqpid-proton-dev
-
-pip install python-qpid-proton
-```
-
-**Upload to DBFS:**
-```bash
-databricks fs cp install-qpid-proton.sh dbfs:/init-scripts/install-qpid-proton.sh
-```
-
-**Configure cluster:**
-1. Go to Compute → Select your cluster → Edit
-2. Under "Advanced options" → "Init Scripts"
-3. Add: `dbfs:/init-scripts/install-qpid-proton.sh`
-4. Restart the cluster
-
-**Alternative: Install via cluster libraries:**
-- Go to Compute → Select cluster → Libraries → Install New
-- Select PyPI and enter: `python-qpid-proton`
-
-> **Note**: PyPI installation may fail without the init script on some cluster types.
-
-### 2. Install the Connector
-
-Upload the `iris_connector` package to your Databricks workspace or install from a wheel:
+Upload the `iris_connector` package to your Databricks workspace or install from a wheel. 
+The connector depends on `azure-servicebus` and `azure-identity`.
 
 ```python
 # In a notebook, install from workspace path
@@ -62,7 +31,7 @@ Upload the `iris_connector` package to your Databricks workspace or install from
 %pip install /dbfs/libraries/iris_connector-0.1.0-py3-none-any.whl
 ```
 
-### 3. Secret Setup
+### 2. Secret Setup
 
 Before using the connector, set up your IRIS credentials in a Databricks secret scope:
 
@@ -73,6 +42,7 @@ databricks secrets create-scope --scope iris
 # Add your IRIS API credentials
 databricks secrets put --scope iris --key iris-client-id
 databricks secrets put --scope iris --key iris-client-secret
+databricks secrets put --scope iris --key iris-tenant-id
 ```
 
 ## Quick Start
@@ -89,6 +59,7 @@ config = IRISConfig.from_databricks_secrets(
     scope="iris",
     client_id_key="iris-client-id",
     client_secret_key="iris-client-secret",
+    tenant_id_key="iris-tenant-id",
     # Uses default queue: iris.5c9f752d-795a-4986-97cc-8a49f5380c02
     checkpoint_location="/dbfs/checkpoints/iris/stream",
 )
@@ -115,6 +86,7 @@ config = IRISConfig.from_databricks_secrets(
     scope="my-custom-scope",
     client_id_key="elexon-client-id",
     client_secret_key="elexon-client-secret",
+    tenant_id_key="elexon-tenant-id",
     checkpoint_location="/dbfs/checkpoints/iris/custom",
 )
 
@@ -153,6 +125,7 @@ client.stop()
 | `queue` | str | `iris.5c9f752d-795a-4986-97cc-8a49f5380c02` | IRIS queue path |
 | `client_id` | str | `""` | OAuth Client ID |
 | `client_secret` | str | `""` | OAuth Client Secret |
+| `tenant_id` | str | `""` | OAuth Tenant ID |
 | `use_tls` | bool | `True` | Enable TLS encryption |
 | `verify_ssl` | bool | `True` | Verify SSL certificates |
 | `prefetch_count` | int | `100` | Messages to prefetch |
@@ -169,6 +142,7 @@ config = IRISConfig.from_databricks_secrets(
     scope="iris",                        # Databricks secret scope name
     client_id_key="iris-client-id",      # Key for Client ID secret
     client_secret_key="iris-client-secret",  # Key for Client Secret
+    tenant_id_key="iris-tenant-id",      # Key for Tenant ID secret
     # Additional options can be passed as keyword arguments
     max_batch_size=1000,
     prefetch_count=200,
@@ -180,6 +154,7 @@ config = IRISConfig.from_databricks_secrets(
 | `scope` | str | `"iris"` | Databricks secret scope name |
 | `client_id_key` | str | `"iris-client-id"` | Secret key for Client ID |
 | `client_secret_key` | str | `"iris-client-secret"` | Secret key for Client Secret |
+| `tenant_id_key` | str | `"iris-tenant-id"` | Secret key for Tenant ID |
 
 ### Environment Variables (Alternative)
 
@@ -192,6 +167,7 @@ For non-Databricks environments, you can use environment variables:
 | `IRIS_QUEUE` | IRIS queue path |
 | `IRIS_CLIENT_ID` | OAuth Client ID |
 | `IRIS_CLIENT_SECRET` | OAuth Client Secret |
+| `IRIS_TENANT_ID` | OAuth Tenant ID |
 | `IRIS_USE_TLS` | Enable TLS (true/false) |
 | `IRIS_PREFETCH_COUNT` | Message prefetch count |
 | `IRIS_MAX_BATCH_SIZE` | Max messages per batch |
@@ -241,7 +217,7 @@ parsed_df = (
 ```
 ┌─────────────────────────────┐   AMQP 1.0   ┌──────────────────┐
 │  Azure Service Bus (IRIS)   │ ◄──────────► │  IRISAMQPClient  │
-│  elexon-insights-iris...    │   TLS/SSL    │  (Proton-based)  │
+│  elexon-insights-iris...    │   TLS/SSL    │ (Azure SDK-based)│
 └─────────────────────────────┘              └────────┬─────────┘
                                                │
                                                ▼
@@ -338,6 +314,6 @@ Contributions are welcome! Please submit issues and pull requests on GitHub.
 ## Acknowledgments
 
 - [Elexon](https://www.elexon.co.uk/) for providing the IRIS service
-- [Apache Qpid Proton](https://qpid.apache.org/proton/) for AMQP 1.0 support
+- [Azure Service Bus SDK](https://github.com/Azure/azure-sdk-for-python/tree/main/sdk/servicebus/azure-servicebus) for AMQP 1.0 support
 - [Apache Spark](https://spark.apache.org/) for the streaming framework
 

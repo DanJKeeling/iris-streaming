@@ -32,7 +32,8 @@ setup(
     ],
     python_requires=">=3.9",
     install_requires=[
-        "python-qpid-proton>=0.38.0",
+        "azure-servicebus>=7.11.0",
+        "azure-identity>=1.14.0",
         "pyspark>=3.4.0",
         "pydantic>=2.0.0",
         "pydantic-settings>=2.0.0",

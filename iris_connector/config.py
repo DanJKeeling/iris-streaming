@@ -66,6 +66,7 @@ class IRISConfig:
     queue: str = "iris.5c9f752d-795a-4986-97cc-8a49f5380c02"
     client_id: str = ""
     client_secret: str = ""
+    tenant_id: str = ""
     
     # Subscription settings
     subscription_name: str = "pyspark-iris-connector"
@@ -107,6 +108,7 @@ class IRISConfig:
             queue=os.getenv("IRIS_QUEUE", cls.queue),
             client_id=os.getenv("IRIS_CLIENT_ID", ""),
             client_secret=os.getenv("IRIS_CLIENT_SECRET", ""),
+            tenant_id=os.getenv("IRIS_TENANT_ID", ""),
             subscription_name=os.getenv("IRIS_SUBSCRIPTION_NAME", cls.subscription_name),
             use_tls=os.getenv("IRIS_USE_TLS", "true").lower() == "true",
             prefetch_count=int(os.getenv("IRIS_PREFETCH_COUNT", cls.prefetch_count)),
@@ -120,6 +122,7 @@ class IRISConfig:
         scope: str = "iris",
         client_id_key: str = "iris-client-id",
         client_secret_key: str = "iris-client-secret",
+        tenant_id_key: str = "iris-tenant-id",
         **kwargs,
     ) -> "IRISConfig":
         """
@@ -132,6 +135,7 @@ class IRISConfig:
             scope: Databricks secret scope name (default: "iris")
             client_id_key: Key name for the Client ID secret (default: "iris-client-id")
             client_secret_key: Key name for the Client Secret (default: "iris-client-secret")
+            tenant_id_key: Key name for the Tenant ID secret (default: "iris-tenant-id")
             **kwargs: Additional IRISConfig parameters (host, port, queue, use_tls, etc.)
         
         Returns:
@@ -147,6 +151,7 @@ class IRISConfig:
                 scope="my-scope",
                 client_id_key="elexon-client-id",
                 client_secret_key="elexon-client-secret",
+                tenant_id_key="elexon-tenant-id",
             )
             ```
         
@@ -154,6 +159,7 @@ class IRISConfig:
             1. Create a secret scope: databricks secrets create-scope --scope iris
             2. Add Client ID: databricks secrets put --scope iris --key iris-client-id
             3. Add Client Secret: databricks secrets put --scope iris --key iris-client-secret
+            4. Add Tenant ID: databricks secrets put --scope iris --key iris-tenant-id
         """
         dbutils = get_dbutils()
         
@@ -162,23 +168,25 @@ class IRISConfig:
         try:
             client_id = dbutils.secrets.get(scope=scope, key=client_id_key)
             client_secret = dbutils.secrets.get(scope=scope, key=client_secret_key)
+            tenant_id = dbutils.secrets.get(scope=scope, key=tenant_id_key)
         except Exception as e:
             raise ValueError(
                 f"Failed to retrieve IRIS credentials from Databricks secrets. "
-                f"Scope: '{scope}', Keys: '{client_id_key}', '{client_secret_key}'. "
+                f"Scope: '{scope}', Keys: '{client_id_key}', '{client_secret_key}', '{tenant_id_key}'. "
                 f"Ensure the secret scope exists and contains the required keys. "
                 f"Error: {e}"
             )
         
-        if not client_id or not client_secret:
+        if not client_id or not client_secret or not tenant_id:
             raise ValueError(
                 f"IRIS credentials from Databricks secrets are empty. "
-                f"Scope: '{scope}', Keys: '{client_id_key}', '{client_secret_key}'"
+                f"Scope: '{scope}', Keys: '{client_id_key}', '{client_secret_key}', '{tenant_id_key}'"
             )
         
         return cls(
             client_id=client_id,
             client_secret=client_secret,
+            tenant_id=tenant_id,
             **kwargs,
         )
     

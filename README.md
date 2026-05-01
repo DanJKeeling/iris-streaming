@@ -74,25 +74,32 @@ df = (
 
 ## Deploy via Asset Bundle
 
-The repo ships a Databricks Asset Bundle (`databricks.yml`) that builds the wheel, provisions a UC Volume for checkpoints, and deploys `examples/quickstart.py` as a serverless Job. **Before `databricks bundle deploy` will work, you must edit the following:**
+The repo ships a Databricks Asset Bundle (`databricks.yml`) that builds the wheel, provisions a UC Volume for checkpoints, and deploys `examples/quickstart.py` as a serverless Job. The bundle has **no environment-specific values committed** — workspace, catalog, and Elexon-portal-derived values are all supplied at deploy time.
 
-1. **`databricks.yml` — `targets.<target>.workspace.host`**
-   The shipped target (`fevm`) points at one specific workspace host. Either rename the target or change the host to match yours.
+**Before `databricks bundle deploy` will work, you must:**
 
-2. **`databricks.yml` — `variables` (catalog / schema / volume / iris_secret_scope)**
-   Defaults are `classic_stable_dankeeling_catalog` / `energy_trading` / `iris_checkpoints` / `iris`. Change any that don't exist (or won't be created) in your workspace.
+1. **Configure a Databricks CLI profile for your workspace.** The bundle does not pin `workspace.host`; the host comes from whichever profile you pass via `-p`. Set one up once:
 
-3. **`.databricks/bundle/<target>/variable-overrides.json`** *(create this file — it is gitignored)*
-   The bundle declares `iris_namespace` and `iris_entity_path` with no defaults — they are intentionally not in source. Create the file with the values from your IRIS portal:
+   ```bash
+   databricks configure --profile <your-cli-profile>   # interactive
+   ```
+
+2. **Create `.databricks/bundle/<target>/variable-overrides.json`** *(gitignored — never committed)*
+   The shipped target name is `fevm`; either reuse it or rename it in `databricks.yml`. Then create the matching override file with the five required values:
 
    ```json
    {
+     "catalog": "<your-catalog>",
+     "schema": "<your-schema>",
+     "volume": "<your-volume-name>",
      "iris_namespace": "<your-iris-namespace>.servicebus.windows.net",
      "iris_entity_path": "iris.<your-queue-uuid>"
    }
    ```
 
-4. **Secrets** — populate the `iris` scope (see [Credentials](#credentials) above) before running the job; the notebook reads them via `dbutils.secrets.get`.
+   The catalog and schema must already exist (the bundle creates the volume). The IRIS values come from your Elexon registration.
+
+3. **Populate the `iris` secret scope** (see [Credentials](#credentials) above) — the notebook reads `iris-client-id`, `iris-client-secret`, and `iris-tenant-id` via `dbutils.secrets.get` at runtime. To use a different scope name, override `iris_secret_scope` in the JSON file (default is `iris`).
 
 Then:
 

@@ -4,22 +4,17 @@ bundle:
 variables:
   catalog:
     description: Unity Catalog for the output table and checkpoint volume.
-    default: classic_stable_dankeeling_catalog
   schema:
     description: Schema for the output table and checkpoint volume.
-    default: energy_trading
   volume:
     description: Volume name for the streaming checkpoint.
-    default: iris_checkpoints
   iris_secret_scope:
     description: Databricks secret scope holding IRIS credentials.
     default: iris
   iris_namespace:
-    description: >
-      Service Bus fully-qualified namespace, e.g.
-      '<your-iris-namespace>.servicebus.windows.net'. Set per-target.
+    description: Service Bus fully-qualified namespace, e.g. <ns>.servicebus.windows.net.
   iris_entity_path:
-    description: IRIS Service Bus queue name (UUID from your Elexon registration). Set per-target.
+    description: IRIS Service Bus queue name (UUID from your Elexon registration).
 
 artifacts:
   iris_connector_wheel:
@@ -61,7 +56,7 @@ targets:
   fevm:
     default: true
     mode: development
-    workspace:
-      host: https://fevm-classic-stable-dankeeling.cloud.databricks.com
-    # iris_namespace and iris_entity_path are sourced from
-    # .databricks/bundle/fevm/variable-overrides.json (gitignored).
+    # Workspace host is taken from the CLI profile passed via `-p` (or
+    # DATABRICKS_HOST). All other variables (catalog, schema, volume,
+    # iris_*) are sourced from .databricks/bundle/<target>/variable-overrides.json
+    # (gitignored) — see README "Deploy via Asset Bundle".

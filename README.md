@@ -72,6 +72,40 @@ df = (
 )
 ```
 
+## Deploy via Asset Bundle
+
+The repo ships a Databricks Asset Bundle (`databricks.yml`) that builds the wheel, provisions a UC Volume for checkpoints, and deploys `examples/quickstart.py` as a serverless Job. **Before `databricks bundle deploy` will work, you must edit the following:**
+
+1. **`databricks.yml` — `targets.<target>.workspace.host`**
+   The shipped target (`fevm`) points at one specific workspace host. Either rename the target or change the host to match yours.
+
+2. **`databricks.yml` — `variables` (catalog / schema / volume / iris_secret_scope)**
+   Defaults are `classic_stable_dankeeling_catalog` / `energy_trading` / `iris_checkpoints` / `iris`. Change any that don't exist (or won't be created) in your workspace.
+
+3. **`.databricks/bundle/<target>/variable-overrides.json`** *(create this file — it is gitignored)*
+   The bundle declares `iris_namespace` and `iris_entity_path` with no defaults — they are intentionally not in source. Create the file with the values from your IRIS portal:
+
+   ```json
+   {
+     "iris_namespace": "<your-iris-namespace>.servicebus.windows.net",
+     "iris_entity_path": "iris.<your-queue-uuid>"
+   }
+   ```
+
+4. **Secrets** — populate the `iris` scope (see [Credentials](#credentials) above) before running the job; the notebook reads them via `dbutils.secrets.get`.
+
+Then:
+
+```bash
+databricks bundle deploy -t fevm -p <your-cli-profile>
+databricks bundle run iris_streaming_quickstart -t fevm -p <your-cli-profile>
+```
+
+### Known gotchas
+
+- **Terraform GPG-key expiry in CLI v0.294.x.** If `bundle deploy` fails with `error downloading Terraform: openpgp: key expired`, point DAB at a locally-installed Terraform: `export DATABRICKS_TF_EXEC_PATH=$(which terraform) DATABRICKS_TF_VERSION=$(terraform version | head -1 | awk '{print $2}' | tr -d v)`. Resolved in newer CLI builds.
+- **Wheel build needs internet for `setuptools`.** The bundle uses `uv build` (which bootstraps its own build deps) instead of `pip wheel`; if you swap to `pip`, ensure `setuptools>=64` is reachable.
+
 ## Options
 
 | Option | Default | Description |

@@ -1,24 +1,18 @@
-"""
-IRIS PySpark Streaming Connector
-
-A custom PySpark streaming source connector for Elexon's IRIS
-(Insights Real-time Information Service) AMQP 1.0 message server.
-"""
+"""Spark Structured Streaming source for Elexon's IRIS AMQP service."""
 
 from iris_connector.config import IRISConfig
-from iris_connector.amqp_client import IRISAMQPClient
-from iris_connector.spark_source import (
-    IRISStreamingSource,
-    create_iris_stream,
-    IRISMicroBatchReader,
-)
+from iris_connector.source import IRIS_SCHEMA, IRISDataSource, IRISStreamReader
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "IRISConfig",
-    "IRISAMQPClient", 
-    "IRISStreamingSource",
-    "create_iris_stream",
-    "IRISMicroBatchReader",
+    "IRISDataSource",
+    "IRISStreamReader",
+    "IRIS_SCHEMA",
+    "register",
 ]
 
+
+def register(spark) -> None:
+    """Register the 'iris' streaming format with the given SparkSession."""
+    spark.dataSource.register(IRISDataSource)

@@ -1,32 +1,49 @@
-"""Stream Elexon IRIS into a Delta table on Databricks (DBR 15.x+).
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # IRIS Streaming Quickstart
+# MAGIC
+# MAGIC Streams Elexon's IRIS feed into a Delta table using the
+# MAGIC `iris` Spark Structured Streaming source. Configured via job widgets.
 
-Prerequisites:
-    1. Install the connector on the cluster:
-         %pip install /Workspace/path/to/iris-pyspark-connector
-       (or build a wheel and install from a Volume)
-    2. Create a Databricks secret scope `iris` with keys:
-         iris-client-id, iris-client-secret, iris-tenant-id
-    3. Create a UC Volume for the checkpoint, e.g.
-         /Volumes/main/default/iris/_checkpoints
-"""
+# COMMAND ----------
+
+dbutils.widgets.text("secret_scope", "iris")
+dbutils.widgets.text("fully_qualified_namespace", "")
+dbutils.widgets.text("entity_path", "")
+dbutils.widgets.text("table_name", "")
+dbutils.widgets.text("checkpoint_path", "")
+dbutils.widgets.text("max_messages_per_trigger", "500")
+
+# COMMAND ----------
 
 from iris_connector import register
 
-register(spark)  # noqa: F821
+register(spark)
+
+# COMMAND ----------
+
+scope = dbutils.widgets.get("secret_scope")
+client_id = dbutils.secrets.get(scope, "iris-client-id")
+client_secret = dbutils.secrets.get(scope, "iris-client-secret")
+tenant_id = dbutils.secrets.get(scope, "iris-tenant-id")
 
 stream = (
-    spark.readStream  # noqa: F821
+    spark.readStream
     .format("iris")
-    .option("secret_scope", "iris")
-    .option("entity_path", "iris.5c9f752d-795a-4986-97cc-8a49f5380c02")
-    .option("max_messages_per_trigger", "500")
+    .option("fully_qualified_namespace", dbutils.widgets.get("fully_qualified_namespace"))
+    .option("entity_path", dbutils.widgets.get("entity_path"))
+    .option("client_id", client_id)
+    .option("client_secret", client_secret)
+    .option("tenant_id", tenant_id)
+    .option("max_messages_per_trigger", dbutils.widgets.get("max_messages_per_trigger"))
     .load()
 )
 
-(
+query = (
     stream.writeStream
     .format("delta")
-    .option("checkpointLocation", "/Volumes/main/default/iris/_checkpoints/quickstart")
-    .trigger(processingTime="2 seconds")
-    .toTable("main.default.iris_raw")
+    .option("checkpointLocation", dbutils.widgets.get("checkpoint_path"))
+    .trigger(availableNow=True)
+    .toTable(dbutils.widgets.get("table_name"))
 )
+query.awaitTermination()

@@ -41,16 +41,25 @@ Obtain credentials by registering at [bmrs.elexon.co.uk/iris](https://bmrs.elexo
 
 ## Usage
 
+Resolve credentials in the notebook (the data source runs in an isolated subprocess where `dbutils` is unavailable) and pass them as options:
+
 ```python
 from iris_connector import register
 
 register(spark)
 
+client_id     = dbutils.secrets.get("iris", "iris-client-id")
+client_secret = dbutils.secrets.get("iris", "iris-client-secret")
+tenant_id     = dbutils.secrets.get("iris", "iris-tenant-id")
+
 df = (
     spark.readStream
     .format("iris")
-    .option("secret_scope", "iris")
-    .option("entity_path", "iris.5c9f752d-795a-4986-97cc-8a49f5380c02")
+    .option("fully_qualified_namespace", "<your-iris-namespace>.servicebus.windows.net")
+    .option("entity_path", "<your-iris-queue-uuid>")
+    .option("client_id", client_id)
+    .option("client_secret", client_secret)
+    .option("tenant_id", tenant_id)
     .load()
 )
 
@@ -67,13 +76,9 @@ df = (
 
 | Option | Default | Description |
 |---|---|---|
+| `fully_qualified_namespace` | *required* | Service Bus namespace, e.g. `<your-iris-namespace>.servicebus.windows.net` |
 | `entity_path` | *required* | IRIS queue name, e.g. `iris.<uuid>` |
-| `fully_qualified_namespace` | `elexon-insights-iris.servicebus.windows.net` | Service Bus namespace |
-| `secret_scope` | — | Databricks secret scope holding credentials |
-| `client_id_key` | `iris-client-id` | Secret key for client id |
-| `client_secret_key` | `iris-client-secret` | Secret key for client secret |
-| `tenant_id_key` | `iris-tenant-id` | Secret key for tenant id |
-| `client_id` / `client_secret` / `tenant_id` | — | Inline credentials (use `secret_scope` in production) |
+| `client_id` / `client_secret` / `tenant_id` | *required* | Service principal credentials (resolve via `dbutils.secrets.get` in the notebook) |
 | `prefetch_count` | `100` | AMQP prefetch window |
 | `max_messages_per_trigger` | `1000` | Upper bound on messages per micro-batch |
 | `max_wait_time_seconds` | `1` | Max time to wait for a non-empty batch |

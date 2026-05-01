@@ -46,3 +46,6 @@ Thumbs.db
 # Claude Code
 .claude/
 
+# Databricks bundle local state and variable overrides
+.databricks/
+

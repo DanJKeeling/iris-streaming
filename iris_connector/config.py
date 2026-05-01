@@ -7,16 +7,15 @@ from dataclasses import dataclass
 from typing import Mapping
 
 
-_DEFAULT_NAMESPACE = "elexon-insights-iris.servicebus.windows.net"
-
-
 @dataclass
 class IRISConfig:
     """Resolved connection settings for an Elexon IRIS queue receiver.
 
     Constructed inside the data source from the options passed to
-    `spark.readStream.format("iris").option(...)`. Credentials may be
-    supplied directly, via Databricks secrets, or via environment variables.
+    `spark.readStream.format("iris").option(...)`. Credentials must be
+    supplied as plain strings — the data source runs in an isolated
+    subprocess where `dbutils` is unavailable, so resolve Databricks
+    secrets in the calling notebook and pass them as `option(...)` values.
     """
 
     fully_qualified_namespace: str
@@ -37,15 +36,29 @@ class IRISConfig:
             opts.get("fully_qualified_namespace")
             or opts.get("namespace")
             or os.getenv("IRIS_NAMESPACE")
-            or _DEFAULT_NAMESPACE
         )
+        if not namespace:
+            raise ValueError(
+                "IRIS source requires a 'fully_qualified_namespace' option "
+                "(e.g. '<your-iris-namespace>.servicebus.windows.net')."
+            )
         entity_path = opts.get("entity_path") or os.getenv("IRIS_ENTITY_PATH")
         if not entity_path:
             raise ValueError(
                 "IRIS source requires an 'entity_path' (queue name) option."
             )
 
-        client_id, client_secret, tenant_id = _resolve_credentials(opts)
+        client_id = opts.get("client_id") or os.getenv("IRIS_CLIENT_ID", "")
+        client_secret = opts.get("client_secret") or os.getenv("IRIS_CLIENT_SECRET", "")
+        tenant_id = opts.get("tenant_id") or os.getenv("IRIS_TENANT_ID", "")
+
+        if not (client_id and client_secret and tenant_id):
+            raise ValueError(
+                "IRIS source requires client_id, client_secret, and tenant_id options. "
+                "On Databricks, resolve via dbutils.secrets.get() in the calling "
+                "notebook and pass the values as .option(...) — the data source "
+                "subprocess cannot access dbutils directly."
+            )
 
         return cls(
             fully_qualified_namespace=namespace,
@@ -58,43 +71,3 @@ class IRISConfig:
             max_wait_time_seconds=int(opts.get("max_wait_time_seconds", 1)),
             lock_renewal_seconds=int(opts.get("lock_renewal_seconds", 300)),
         )
-
-
-def _resolve_credentials(opts: Mapping[str, str]) -> tuple[str, str, str]:
-    scope = opts.get("secret_scope")
-    if scope:
-        get = _dbutils_secret_getter()
-        return (
-            get(scope, opts.get("client_id_key", "iris-client-id")),
-            get(scope, opts.get("client_secret_key", "iris-client-secret")),
-            get(scope, opts.get("tenant_id_key", "iris-tenant-id")),
-        )
-
-    client_id = opts.get("client_id") or os.getenv("IRIS_CLIENT_ID", "")
-    client_secret = opts.get("client_secret") or os.getenv("IRIS_CLIENT_SECRET", "")
-    tenant_id = opts.get("tenant_id") or os.getenv("IRIS_TENANT_ID", "")
-
-    if not (client_id and client_secret and tenant_id):
-        raise ValueError(
-            "IRIS source requires client_id, client_secret, and tenant_id "
-            "(supply directly, via 'secret_scope' option, or via "
-            "IRIS_CLIENT_ID/IRIS_CLIENT_SECRET/IRIS_TENANT_ID env vars)."
-        )
-    return client_id, client_secret, tenant_id
-
-
-def _dbutils_secret_getter():
-    from pyspark.dbutils import DBUtils
-    from pyspark.sql import SparkSession
-
-    spark = SparkSession.getActiveSession()
-    if spark is None:
-        raise RuntimeError(
-            "secret_scope option requires an active SparkSession on a Databricks runtime."
-        )
-    dbutils = DBUtils(spark)
-
-    def _get(scope: str, key: str) -> str:
-        return dbutils.secrets.get(scope=scope, key=key)
-
-    return _get

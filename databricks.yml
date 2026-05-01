@@ -1,0 +1,67 @@
+bundle:
+  name: iris-streaming
+
+variables:
+  catalog:
+    description: Unity Catalog for the output table and checkpoint volume.
+    default: classic_stable_dankeeling_catalog
+  schema:
+    description: Schema for the output table and checkpoint volume.
+    default: energy_trading
+  volume:
+    description: Volume name for the streaming checkpoint.
+    default: iris_checkpoints
+  iris_secret_scope:
+    description: Databricks secret scope holding IRIS credentials.
+    default: iris
+  iris_namespace:
+    description: >
+      Service Bus fully-qualified namespace, e.g.
+      '<your-iris-namespace>.servicebus.windows.net'. Set per-target.
+  iris_entity_path:
+    description: IRIS Service Bus queue name (UUID from your Elexon registration). Set per-target.
+
+artifacts:
+  iris_connector_wheel:
+    type: whl
+    path: .
+    build: uv build --wheel --out-dir dist
+
+resources:
+  volumes:
+    iris_checkpoints:
+      catalog_name: ${var.catalog}
+      schema_name: ${var.schema}
+      name: ${var.volume}
+      volume_type: MANAGED
+
+  jobs:
+    iris_streaming_quickstart:
+      name: iris-streaming-quickstart
+      tasks:
+        - task_key: stream
+          environment_key: default
+          notebook_task:
+            notebook_path: ./examples/quickstart.py
+            base_parameters:
+              secret_scope: ${var.iris_secret_scope}
+              fully_qualified_namespace: ${var.iris_namespace}
+              entity_path: ${var.iris_entity_path}
+              table_name: ${var.catalog}.${var.schema}.iris_raw
+              checkpoint_path: /Volumes/${var.catalog}/${var.schema}/${var.volume}/quickstart
+              max_messages_per_trigger: "500"
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+            dependencies:
+              - ./dist/iris_pyspark_connector-0.2.0-py3-none-any.whl
+
+targets:
+  fevm:
+    default: true
+    mode: development
+    workspace:
+      host: https://fevm-classic-stable-dankeeling.cloud.databricks.com
+    # iris_namespace and iris_entity_path are sourced from
+    # .databricks/bundle/fevm/variable-overrides.json (gitignored).

@@ -43,7 +43,7 @@ query = (
     stream.writeStream
     .format("delta")
     .option("checkpointLocation", dbutils.widgets.get("checkpoint_path"))
-    .trigger(availableNow=True)
+    .trigger(processingTime="500 milliseconds")
     .toTable(dbutils.widgets.get("table_name"))
 )
 query.awaitTermination()

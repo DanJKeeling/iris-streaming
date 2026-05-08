@@ -25,7 +25,7 @@ class IRISConfig:
     tenant_id: str
     prefetch_count: int = 100
     max_messages_per_trigger: int = 1000
-    max_wait_time_seconds: int = 1
+    max_wait_time_seconds: float = 0.1
     lock_renewal_seconds: int = 300
 
     @classmethod
@@ -68,6 +68,6 @@ class IRISConfig:
             tenant_id=tenant_id,
             prefetch_count=int(opts.get("prefetch_count", 100)),
             max_messages_per_trigger=int(opts.get("max_messages_per_trigger", 1000)),
-            max_wait_time_seconds=int(opts.get("max_wait_time_seconds", 1)),
+            max_wait_time_seconds=float(opts.get("max_wait_time_seconds", 0.1)),
             lock_renewal_seconds=int(opts.get("lock_renewal_seconds", 300)),
         )

@@ -67,7 +67,7 @@ df = (
     df.writeStream
     .format("delta")
     .option("checkpointLocation", "/Volumes/main/default/iris/_checkpoints/raw")
-    .trigger(processingTime="2 seconds")
+    .trigger(processingTime="500 milliseconds")
     .toTable("main.default.iris_raw")
 )
 ```
@@ -122,7 +122,7 @@ databricks bundle run iris_streaming_quickstart -t fevm -p <your-cli-profile>
 | `client_id` / `client_secret` / `tenant_id` | *required* | Service principal credentials (resolve via `dbutils.secrets.get` in the notebook) |
 | `prefetch_count` | `100` | AMQP prefetch window |
 | `max_messages_per_trigger` | `1000` | Upper bound on messages per micro-batch |
-| `max_wait_time_seconds` | `1` | Max time to wait for a non-empty batch |
+| `max_wait_time_seconds` | `0.1` | Max time to wait for a non-empty batch (fractional seconds OK; lower = lower latency, more empty polls) |
 | `lock_renewal_seconds` | `300` | Auto-renew peek-locks for up to this many seconds per message |
 
 Environment-variable fallback (for local testing): `IRIS_NAMESPACE`, `IRIS_ENTITY_PATH`, `IRIS_CLIENT_ID`, `IRIS_CLIENT_SECRET`, `IRIS_TENANT_ID`.
